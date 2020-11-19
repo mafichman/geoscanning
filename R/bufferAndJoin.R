@@ -39,4 +39,4 @@ return(cleanData_join_buffers)
 
 # Vignette
 
-testBuffers <- bufferAndJoin(retailersTest, testAll, 2272, 100)
+# testBuffers <- bufferAndJoin(retailersTest, testAll, 2272, 100)

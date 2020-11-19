@@ -30,6 +30,8 @@ ifelse(names(retailers) != canonical_names,
        print("WARNING: Column names are non-standard"), 
        print("Column names match standard names"))
 
+print("Data contain")
+
 retailers %>%
   filter(is.na(lat) == TRUE) %>%
   nrow() %>%
@@ -42,4 +44,4 @@ print("NA geodata observations")
 }
 
 # Vignette
-retailersTest <- intakeRetailers("//jove.design.upenn.edu/Dept-Shares/prax/01 Project Folders/2019_Annenberg_GeoScanning/dataOutputs/all_Retailers_10_20_20.csv")
+# retailersTest <- intakeRetailers("//jove.design.upenn.edu/Dept-Shares/prax/01 Project Folders/2019_Annenberg_GeoScanning/dataOutputs/all_Retailers_10_20_20.csv")
