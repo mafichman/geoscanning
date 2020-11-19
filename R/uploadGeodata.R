@@ -38,4 +38,6 @@ return(myData)
 
 # Vignette
 
-# test <- uploadGeodata("//jove.design.upenn.edu/Dept-Shares/prax/01 Project Folders/2019_Annenberg_GeoScanning/inputData/Test kml and json timeline data/Test kml and json timeline data/multi_json_test")
+# Using the test data from the geoscanning github repo:
+
+# test <- uploadGeodata("Data/Geotracking/multi_json_test")
