@@ -1,0 +1,1511 @@
+---
+title: "GeoScanning Code Base"
+author: "Michael Fichman for PennPraxis"
+date: "November, 2020"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    code_download: true
+---
+
+```{r setup, include=FALSE,message = FALSE,cache=TRUE}
+knitr::opts_chunk$set(echo = TRUE)
+options(scipen=999)
+library(knitr)
+library(kableExtra)
+library(rmarkdown)
+```
+
+<style>
+  .superbigimage{
+      overflow-x:scroll;
+      white-space: nowrap;
+  }
+
+  .superbigimage img{
+     max-width: none;
+  }
+
+
+</style>
+
+#1. Overview
+
+This document details the code used to intake, clean and analyze geo-location data from the GeoScanning project subjects, spatially relate it to retailer locations and summarize and analyze it according to parameters to be specified.
+
+During the summer and fall of 2019, Michael Fichman, city planning researcher and analyst at PennPraxis (of the Weitzman School of Design), took pre-existing codebase developed for the project and updated it to conform (where possible) to modern `tidyverse` data wrangling standards and the powerful `sf` spatial package which is integrated in to the `tidyverse` and R's powerful visualization package `ggplot2`.
+
+The code contained heirein is designed to operate on test geo data and a data set of tobacco retailer locations. 
+
+## 1.1. About this code base
+
+The tidyverse is ['a set of packages that work in harmony because they share common data representations and API design. The tidyverse package is designed to make it easy to install and load core packages from the tidyverse in a single command.'](https://blog.rstudio.com/2016/09/15/tidyverse-1-0-0/). The tidyverse is notable for two reasons - first because it is designed to work strictly with flat files - dataframes or tibbles. Second because it eschews for-looping in favor of a set of functions in the package dplyr which effectively replace bespoke loops. Third because it has a more efficient data cleaning syntax than base R - it uses the %>% operator, known as a 'pipe' to pass a dataframe from function to function instead of base R's syntax which involves either creating lots of nested parentheses or intemediate data objects.
+
+This process will generate a more flexible code base - harder to use without a surface understanding of R, but much more adaptable to new intake data types and structures, updates and new analyses. For example, this code will have fewer tightly written functions that can be simply executed, but are very difficult to troubleshoot in the event of bad data or changes to the programming language. 
+
+The user needs to be able to operate the R studio environment, execute code in the R studio console, install and load packages, set filepaths for uploading and exporting data and alter parameters for certain functions and code blocks.
+
+That said, the new code, as with the old code, is open source and subject to deprecation, package updates etc., This document is designed to annotate the code base to be understandable, reproducible and reflective of research needs.
+
+## 1.2. Using R Markdown
+
+This document is [an R Markdown document](https://bookdown.org/yihui/rmarkdown/), which is a publishing language designed embed chunks of R code. It can also be used to create reproducible reports undergirded by R code.
+
+Code can be cut and pasted from this document into a regular R code file or the R console.
+
+Use the table of contents at the left hand side to navigate through this document.
+
+## 1.3. The Structure of This Code Base
+
+TO DO : Describe the new structure of the code base: Intake, clean, space-time indicators, output workspace and data, spatial joins to census and retailers.
+
+
+## 1.4. The Nature and Structure of the Data
+
+The data being used in this study are of two types - geotracking data collected from subject phones and retailer location data being collected from licensing databases. Both data types have their own quirks and liabilities.
+
+Test geolocation data being used for this study was previously in kml file format, but not a kml format that has proved readable with standard kml drivers for popular software such as ArcGIS or the `sf` spatial package in R. Therefore, these data within the kml file itself need to be parsed.
+
+Alternatively, json exports are fairly easy to use - it is suggested that users export files in json format. This code reflects the assumption that json will be the preferred data type.
+
+Retailer data is administrative - not well suited for research purposes. It also appears to be incomplete and will need to be patched up.
+
+# 2. Set up
+
+Prior to data intake and processing, packages, graphic styling, API key codes and other information should be set up to enable proper execution of the code which follows.
+
+## 2.1. Load Libraries
+
+`tidyverse` - R's mutually intelligible world of data-wrangling and graphics packages including `dplyr`
+
+`sf` - The premier spatial package for R, which plays well with `ggplot2`, `dplyr` and the other tidyverse packages. Includes geoprocessing capabilities for point and polygon geometries.
+
+`tigris` - A package for calling shapefiles from the US Dept. of Commerce, including political boundaries, school districts and hydrology
+
+`tidycensus` - A `tidy` and `sf` compatible package for calling the US Census API for any available data from the ACS and decennial census, 2000 to present. Includes geometries from tracts to counties to states if desired.
+
+`viridis` - Color palettes for data vizualization
+
+`lubridate` - A sophisticated yet simple date-handling package
+
+`mapview` - A dynamic mapping package, similar to leaflet, that accepts `sf` objects. Fairly janky, ill-supported and best used for internal visualizations rather than public presentation.
+
+`ggmap` - An older mapping graphics package designed for use with ggplot, which has been surpassed by `sf` but allows for geocoding to APIs such as Google Maps and the Data Science Toolkit.
+
+`jsonlite` - A package designed to upload, convert and handle JSON files in R
+
+`RSocrata` - A package used to interact with APIs commonly used to host open data sets. Pennsylvania and NJ use "SODA" - the Socrata Open Data API as an endpoint for its data.
+
+`leaflet` - TO DO
+
+`leaflet.providers` - TO DO
+
+`devtools` - TO DO (see nyu mobility package etc)
+
+```{r libraries_and_environment, results = 'hide', warning = FALSE, message= FALSE,cache=TRUE}
+library(tidyverse)
+library(sf)
+library(tigris)
+library(tidycensus)
+library(viridis)
+library(lubridate)
+library(mapview)
+library(ggmap)
+library(jsonlite)
+library(RSocrata)
+library(leaflet)
+library(leaflet.providers)
+library(devtools)
+
+devtools::install_github("nyu-mhealth/Mobility")
+library(Mobility)
+```
+
+## 2.2. Create Graphic Styling
+
+Load a set of themes for publishable maps and plots known here as `plotTheme` and `mapTheme`. These can be added to `ggplot2` scripts and serve a whole set of style elements including element sizes, angles, gridlines etc.,
+
+```{r themes_and_palettes, results = 'hide', warning = FALSE, message= FALSE,cache=TRUE}
+plotTheme <- theme(
+  plot.title =element_text(size=12),
+  plot.subtitle = element_text(size=8),
+  plot.caption = element_text(size = 6),
+  axis.text.x = element_text(size = 10, angle = 45, hjust = 1),
+  axis.text.y = element_text(size = 10),
+  axis.title.y = element_text(size = 10),
+  # Set the entire chart region to blank
+  panel.background=element_blank(),
+  plot.background=element_blank(),
+  # Format the grid
+  panel.grid.major=element_line(colour="#D0D0D0",size=.75),
+  axis.ticks=element_blank())
+
+mapTheme <- theme(plot.title =element_text(size=12),
+                  plot.subtitle = element_text(size=8),
+                  plot.caption = element_text(size = 6),
+                  axis.line=element_blank(),
+                  axis.text.x=element_blank(),
+                  axis.text.y=element_blank(),
+                  axis.ticks=element_blank(),
+                  axis.title.x=element_blank(),
+                  axis.title.y=element_blank(),
+                  panel.background=element_blank(),
+                  panel.border=element_blank(),
+                  panel.grid.major=element_line(colour = 'transparent'),
+                  panel.grid.minor=element_blank(),
+                  legend.direction = "vertical", 
+                  legend.position = "right",
+                  plot.margin = margin(1, 1, 1, 1, 'cm'),
+                  legend.key.height = unit(1, "cm"), legend.key.width = unit(0.2, "cm"))
+
+palette <- c("#10142A", "#47E9B9", "#F55D60", "#71EA48", "#C148EA", "EAC148" )
+```
+
+
+
+
+
+## 2.4. Set Working Directory
+
+Use the `setwd` to specify a working directory on your computer, server or the like. This command is repeated at various points in the script to point the program to different locations where assorted data is read or written.
+
+The example code block below connects to a folder on the PennPraxis and Weitzman School of Design password-protected server space. The code block below should be changed to reflect your top-level folder for your file tree on a password protected server.
+
+Ultimately, the file tree should contain sub folders for input data, output graphics and output data. Such folders are referenced throughout this codebase - please pay attention to file nomenclature used in the codeblocks.
+
+```{r setwd, results = 'hide', warning = FALSE, message= FALSE,cache=TRUE}
+setwd("//jove.design.upenn.edu/Dept-Shares/prax/01 Project Folders/2019_Annenberg_GeoScanning/")
+```
+
+# 3. Load Data
+
+Whereas previous versions of this code base used kml data exported from phones, these data were persistently problematic in their operability with common spatial data drivers and required elaborate text parsing prone to opaque errors that would be difficult for an intermediate R user to diagnose.
+
+The routines described in this section are designed to fetch multiple JSON files from a **single folder**, convert each file structure to a preferrable "flat" structure, and append all of the files together, with user/file name attached to indicate subject ID.
+
+It is much simpler to use JSON data from google maps geotracking software than it is to use KML data. Functions to use kml data are included in an appendix to this document - we have developed them, but for various reasons, they are not recommended for use at this time because of some odd problems with these data exports.
+
+R operates primarily with "flat" files like CSVs etc., wheras JSONs are nested. `fromJSON` from the `jsonlite` packages is designed to load, convert and handle JSONs and turn them into something workable in R - a data frame.
+
+## 3.1. Load JSON data
+
+We create a function called `loadJSON` which uses `fromJSON` to call a single JSON file, simplify it to a data frame and "flatten" it. The only argument this function takes is a file name `jsonFilename`.
+
+The function subsequently handles latitude, longitude and date information and exports a file which contains a date, lat/lon information alongside measures of accuracy, velocity and altitude contained in the original JSON.
+
+```{r loadJSON, warning = FALSE, message= FALSE,cache=TRUE}
+loadJSON <- function(jsonFilename){fromJSON(jsonFilename, 
+                                            simplifyDataFrame = TRUE, 
+                                            flatten = TRUE)%>%
+    .[1] %>% 
+    as.data.frame() %>%
+    mutate(lat = locations.latitudeE7 / 1e7, # put the decimal in the right place for the lat
+           lon = locations.longitudeE7 / 1e7, # put the decimal in the right place for the lat
+           datetime = as.POSIXct(as.numeric(locations.timestampMs)/1000, # go from unix time to POSIXct date time
+                                 origin = "1970-01-01")) %>%
+    select(datetime, lat, lon, locations.altitude, 
+           locations.velocity, locations.accuracy) # select only what you need
+  
+}
+```
+
+We create an object called `paths` using the function `dir` to identify all filepaths for jsons (`pattern = "\\.json$"`) in a specific location. 
+
+Recall we used the `setwd` command to establish a top level working directory, and this first argument to `dir` should be the filepath **after** the top level working directory name you established. So no need for any "C://myName/myfolder" etc at the beginning, just the subsidiary folders.
+
+Presently this filepath leads to a specific subfolder where two test JSON outputs are located.
+
+We can also create a vector where the `basename` e.g. the filename of each file is substituted for the arbitrary, numerical 'names` for each file.
+
+```{r paths, cache=TRUE, warning = FALSE}
+setwd("//jove.design.upenn.edu/Dept-Shares/prax/01 Project Folders/2019_Annenberg_GeoScanning/")
+paths <- dir("inputData/Test kml and json timeline data/Test kml and json timeline data/multi_json_test", pattern = "\\.json$", full.names = TRUE)
+
+names(paths) <- basename(paths)
+```
+
+We then use the `map_dfr` function from the `tidyverse`'s `purrr` library to "map" (e.g. apply without looping) the dataframe format to each file in our `paths` object and then append their rows as a data frame. Our resulting dataframe is called `myData`.
+
+```{r map_dfr,warning = FALSE, message= FALSE,cache=TRUE}
+setwd("//jove.design.upenn.edu/Dept-Shares/prax/01 Project Folders/2019_Annenberg_GeoScanning/")
+myData <- map_dfr(paths, loadJSON, .id = "filename")
+```
+
+We can take a look at `myData` using the `glimpse` command.
+
+```{r glimpse_myData, warning = FALSE, message= FALSE,cache=TRUE}
+glimpse(myData)
+```
+
+TO DO - Note that there is now a function that can do the whole loading routine - `uploadGeodata.R`
+
+
+```{r uploadGeodata, cache = TRUE}
+
+# uploadGeodata.R
+
+# A function to load geolocation json data from a folder location and
+# clean it.
+
+# Parameters: filePath - a text string denoting the location of a folder containing json files
+
+# Dependencies: tidyverse, jsonlite
+
+uploadGeodata <- function(filePath){
+  
+  require(tidyverse)
+  require(jsonlite)
+
+loadJSON <- function(jsonFilename){fromJSON(jsonFilename, 
+                                            simplifyDataFrame = TRUE, 
+                                            flatten = TRUE)%>%
+    .[1] %>% 
+    as.data.frame() %>%
+    mutate(lat = locations.latitudeE7 / 1e7, # put the decimal in the right place for the lat
+           lon = locations.longitudeE7 / 1e7, # put the decimal in the right place for the lat
+           datetime = as.POSIXct(as.numeric(locations.timestampMs)/1000, # go from unix time to POSIXct date time
+                                 origin = "1970-01-01")) %>%
+    select(datetime, lat, lon, locations.altitude, 
+           locations.velocity, locations.accuracy) # select only what you need
+  
+}
+
+paths <- dir(filePath, pattern = "\\.json$", full.names = TRUE)
+
+names(paths) <- basename(paths)
+
+myData <- map_dfr(paths, loadJSON, .id = "filename")
+
+return(myData)
+
+}
+
+# Vignette
+
+# myData <- uploadGeodata("//jove.design.upenn.edu/Dept-Shares/prax/01 Project Folders/2019_Annenberg_GeoScanning/inputData/Test kml and json timeline data/Test kml and json timeline data/multi_json_test")
+
+
+```
+
+## 3.2. Select For Relevant Dates, De-identify and Remove Original Data
+
+We can now do date cleaning and deidentification to prepare the data for analysis.
+
+We may have to have some `ifelse` or `case_when` statements for different batches of study times and subject IDs so that we can only select relevant dates and times that apply to the study. We can then `remove` our original data frame `myData`, leaving only the cleaned data for analysis.
+
+See the `case_when` statement below - essentially this is saying that the variable `keep`, which is initially set to 0, should be a 1 when `datetime` is greater than a certain date and time and less than some other date and time.
+
+For our test data, we just strip out a few observations at the beginning and end to demonstrate the technique.
+
+This could also be engineered to take a separate csv with a date range for each filename so that this can be done mechanically.
+
+The `datetime` format is "year-month-day hour:minute:second" input as a string.
+
+```{r filter_dates, warning = FALSE, message= FALSE,cache=TRUE}
+cleanData <- myData %>%
+  mutate(keep = case_when(filename == "file1.json" & 
+                            datetime > "2019-04-22 21:30:45" & 
+                            datetime < "2019-08-05 15:17:47" ~ 1,
+                          filename == "file2.json" & 
+                            datetime > "2019-04-22 21:30:45" & 
+                            datetime < "2019-08-05 15:17:47" ~ 1)) %>%
+  filter(is.na(keep) == FALSE)%>%
+  select(-keep)
+```
+
+At this point, one may write out `cleanData` and remove the original data set (using the `remove` command) from the workspace.
+
+```{r write_cleanData, eval= FALSE,cache=TRUE}
+write.csv(cleanData, "myfilepath.csv")
+
+remove(myData)
+```
+
+
+TO DO - There is now a function `cleanDates.R` designed to clean data for an individual subject (can be chained together to work for multiple subjects)
+
+```{r cleanDates, cache = TRUE}
+# cleanDates.R
+
+# Clean Dates to remove geodata outside study range
+
+# Takes outputs from function uploadGeodata
+
+# Parameters:
+# df - a dataframe output from uploadGeodata
+# dateRangeMin - a minimum bound (noninclusive) of the date range. format "yyyy-mm-dd hh:mm:ss" using a 24hr time for hour
+# dateRangeMax - a minimum bound (noninclusive) of the date range. format "yyyy-mm-dd hh:mm:ss" using a 24hr time for hour
+# fileName - a name for the the json file for the subject in question e.g. "file1.json" - found in the column filename of the output from uploadGeodata
+
+
+cleanDates <- function(df, dateRangeMin, dateRangeMax, fileName){
+
+  require(tidyverse)
+  require(lubridate)
+  
+  cleaned.df <- df %>%
+    mutate(keep = case_when(filename == fileName & 
+                            datetime > dateRangeMin & 
+                            datetime < dateRangeMax ~ 1)) %>%
+    filter((is.na(keep) == FALSE & filename == fileName) | filename != fileName)%>%
+    dplyr::select(-keep)
+  
+  return(cleaned.df)
+    
+}
+
+#  Vignettes:
+#  Clean dates for a single subject, filename 'file1.json``
+#  testCleanDatesIndividual <- cleanDates(test, "2019-04-22 21:30:45", "2019-08-05 15:17:47", "file1.json")
+
+# Clean dates for multiple subjects
+# cleanData <- myData %>%
+#                          cleanDates(., "2019-04-22 21:30:45", "2019-08-05 15:17:47", "file1.json") %>%
+#                          cleanDates(., "2019-04-22 21:30:45", "2019-08-05 15:17:47", "file2.json")
+
+```
+
+# 4. Load Study Area Geometries
+
+We can create a list of county names for the Philadelphia / Delaware Valley region, and use this vector to both call spatial data from the census using the `tigris` package, but also to use as filtering criteria later for our retailer locations. This vector is spelling and case sensitive.
+
+```{r countyList,warning = FALSE, message= FALSE,cache=TRUE}
+countyList <- c('Philadelphia', 'Delaware', 'Bucks', 'Montgomery',
+                'Chester', 'New Castle', 'Burlington', 'Camden',
+                'Gloucester', 'Salem', 'Cumberland', 'Berks',
+                'Lancaster', 'Mercer', 'Salem', 'Atlantic', 'Monmouth',
+                'Kent')
+```
+
+Using the `counties`  function in the `tigris` package, we call the shapefiles for all of PA, NJ and DE from the Census Bureau's API, reproject it to WGS84, Web Mercator and then filter for names in the `countyList` vector we created.
+
+```{r getCounties, message=FALSE, results = 'hide', warning=FALSE, cache=TRUE}
+counties <- counties(c('PA', 'NJ', 'DE')) %>%
+  st_as_sf()%>%
+  st_transform(crs=4326) %>%
+  filter(NAME %in% countyList)
+```
+
+# 5. Apply Time-Space Indicators and Convert To Spatial Object
+
+In this section of code, we attach some time-space indicators to our data. We apply two functions from the NYU Mobility Lab's [library of functions]("https://github.com/nyu-mhealth/Mobility") - `stayevent` and `radiusofgyration`. We then convert our data to the `sf` "simple features" spatial data type. Lastly, we create time and speed lags so that we can understand sampling rate and perhaps infer things about subject movement behavior.
+
+**The sequence of these steps is deliberate** - the NYU functions do not work for `sf` objects - they require data frames with lat/lon data. The time and speed lags require `sf` objects, which are projected in a linear unit (feet) and can thus be used to compute speeds and distances in linear units.
+
+**It is important here that you thoughtfully choose the parameters of both `stayevent` and `radiusofgyration`** to reflect your interpretation as to what time and distance are appropriate to say what is indeed a stay event. The code below 
+
+## 5.1. Stay Events
+
+We calculate stay events for each individual in the data. You will likely be interested in tweaking two (or three) parameters - `dist.threshold`, `time.threshold` and perhaps `groupvar`.
+
+These thresholds define a stay event - staying in some radius for x for y minutes. If your data frames are not chronological, (e.g. the observations are not in time order) this function will not work effectively.
+
+Here is a description of the `stayevent` function from the NYU Mobility documentation.
+
+*This function calculates stay events based on spatial locations and time stamps of mobility data. A distance  threshold and a time threshold are given to determine if points are in the same stay event set. The centroid of points in one stay event set is calculated as the spatial location of the stay event.*
+
+Parameters:
+
+`df` - a data frame object
+
+`coor` - longitude and latitude of the spatial points in the format of c("lon","lat")
+
+`time`  - a POSIXct time object, used to calculate time period
+
+`dist.threshold` - a distance threshold used to determine if points are in the same group. The 
+format is numeric. `Unit is meters.`
+
+**Note that if you want to use a measurement in feet - you need to do the transformation in the dist.threshold argument. For example, below I specify 100/3.28084 as a way to specify 100 feet (e.g. 3.28084 feet in a meter).**
+
+`time.threshold` - a numeric object. Value should have the same unit specified in the time.units
+
+`time.units` - a character string indicating which units time difference is calculated in. 
+Options include: `c("auto", "secs", "mins", "hours", "days", "weeks")`
+
+`groupvar` -  grouping object to stratify time objects. Recommend to be ID for each individual. If groupvar is not specified, time.units will be used to sort data and calculate radius of gyration.
+
+-
+
+Below, we specify a threshold of 100 feet and five minutes, with our data grouped by `filename`
+
+```{r stay_event, warning = FALSE, message= FALSE,cache=TRUE}
+
+cleanData <- stayevent(cleanData, 
+                     coor = c("lon","lat"), 
+                     time = "datetime", 
+                     dist.threshold = 100/3.28084, # conversion to feet
+                     time.threshold = 5, 
+                     time.units = "mins", 
+                     groupvar = "filename")
+```
+## 5.2. Radius of Gyration Measurements
+
+TO DO - Annotation
+
+```{r radius_of_gyration, warning = FALSE, message= FALSE,cache=TRUE}
+cleanData <- cleanData %>%
+    mutate(rg_hr = radiusofgyration(., 
+                               coor = c("lon","lat"), 
+                               time = "datetime", 
+                               time.units = "hour", 
+                               groupvar = "filename"))
+```
+
+
+
+## 5.3. Convert to sf Simple Features Object
+
+The `sf` (or simple features) package is the most robust vector-based GIS package in R. It handles geojson, shapefiles and other major spatial data types and performs projection, geoprocessing and other functions within the `tidyverse` data wrangling framework.  Most of the normal operations that can be performed on a dataframe can be performed on an sf object. The only major difference between a dataframe and an sf object is that an sf object has a `geometry` column which prescribes its geometry, be it point, line or ploygon. 
+
+We begin by taking our `cleanData` data frame, filtering out observations that lack a latitude or longitude reading and use the `st_as_sf` function to create a point `sf` object, specifying the geographic (e.g. unprojected) coordinate system WGS84 aka "web mercator" using the `crs` argument and the recognized reference number for that system, 4326.
+
+We set the argument `remove` to `FALSE` in order to preserve lat/lon values in columns rather than have them erased in the conversion to vector geometry.
+
+
+```{r cleanData_to_sf, warning = FALSE, message= FALSE,cache=TRUE}
+cleanData <- cleanData %>%
+  filter(is.na(lat) == FALSE & is.na(lon) == FALSE) %>%
+  st_as_sf(., coords = c("lon", "lat"), crs = 4326, remove = FALSE)
+```
+
+WGS84 uses lat/lon decimal degrees, and any geoprocessing that you do which requires linear units of distance (feet, meters etc.,) will require projection first. There are projected coordinate systems for Southeastern PA and its environs used by government geographic agencies, the most common being North American Datum 1983 (NAD83), PA State Plane South, which has crs number 2272 and is projected in feet.
+
+More information about projections and their reference numbers can be found at ['spatialreference.org.'](https://spatialreference.org)
+
+## 5.4. Create time and space lags and estimate speed 
+
+There are several reasons to take time and distance lag measurements. First, the original data have a velocity estimate, but much of this data is `NA` -if we create our own velocity estimates we can have an additional (and perhaps better) way to determine when our subjects are in transit past an exposure site at automobile speed - or actually walking past one or inside one.
+
+These lag measurements are done by transforming our data to `crs = 2272` - a projection in feet, and measuring the distance between x-y points from observation to observation.
+
+We create several variables here:
+
+`lagDist` - lagged distance in feet from the previous observation
+
+`lagTime` - lagged time in seconds from the previous observation
+
+`lagmph` - the miles per hour measured from the previous observation
+
+`lead_lag_avg_mph` - the average of the miles per hour from the previous observation and the miles per hour to the next observation
+
+`mean_3_lagDist_ft` - the mean of the 3 previous distance lags for a given observation
+
+
+## 5.5. Space-Time Indicators As One Long Function
+
+```{r time_space_lags, cache = TRUE}
+cleanData <- cleanData %>%
+    ungroup() %>%
+    st_transform(crs = 2272) %>%
+    mutate(y_ft=map_dbl(geometry, ~st_centroid(.x)[[1]]), # add centroid values for labels
+           x_ft=map_dbl(geometry, ~st_centroid(.x)[[2]])) %>%
+    group_by(filename)%>%
+    arrange(datetime)%>%
+    mutate(lagDist_ft = sqrt(((lag(x_ft) - x_ft)^2) + ((lag(y_ft) - y_ft)^2)),
+           lagTime = abs(datetime - lag(datetime)), 
+           lagmph = (lagDist_ft/5280) / (as.numeric(lagTime) / (60*60)),
+           leadDist_ft = sqrt(((lead(x_ft) - x_ft)^2) + ((lead(y_ft) - y_ft)^2)),
+           leadTime = abs(datetime - lead(datetime)), 
+           leadmph = (leadDist_ft/5280) / (as.numeric(leadTime) / (60*60)),
+           lead_lag_avg_mph = (leadmph + lagmph)/2,
+           mean_3_lagDist_ft = (lag(lagDist_ft, 1) + lag(lagDist_ft, 2) + lag(lagDist_ft, 3))/3) %>%
+    dplyr::select(-c(x_ft, y_ft, leadDist_ft, leadmph))
+```
+
+
+```{r space_time_function, cache = TRUE}
+# requirements: lat/lon in 4326, grouping called filename, date called datetime (these can be parameterized)
+
+spaceTimeLags <- function(dataframe){
+
+require(tidyverse)
+require(sf)
+require(lubridate)
+
+# Convert data frame to sf
+dataframe <- dataframe %>%
+  filter(is.na(lat) == FALSE & is.na(lon) == FALSE) %>%
+  st_as_sf(., coords = c("lon", "lat"), crs = 4326, remove = FALSE) %>%
+    ungroup() %>%
+    st_transform(crs = 2272) %>%
+    mutate(y_ft=map_dbl(geometry, ~st_centroid(.x)[[1]]), # add centroid values for labels
+           x_ft=map_dbl(geometry, ~st_centroid(.x)[[2]])) %>%
+    group_by(filename)%>%
+    arrange(datetime)%>%
+    mutate(lagDist_ft = sqrt(((lag(x_ft) - x_ft)^2) + ((lag(y_ft) - y_ft)^2)),
+           lagTime = abs(datetime - lag(datetime)), 
+           lagmph = (lagDist_ft/5280) / (as.numeric(lagTime) / (60*60)),
+           leadDist_ft = sqrt(((lead(x_ft) - x_ft)^2) + ((lead(y_ft) - y_ft)^2)),
+           leadTime = abs(datetime - lead(datetime)), 
+           leadmph = (leadDist_ft/5280) / (as.numeric(leadTime) / (60*60)),
+           lead_lag_avg_mph = (leadmph + lagmph)/2,
+           mean_3_lagDist_ft = (lag(lagDist_ft, 1) + lag(lagDist_ft, 2) + lag(lagDist_ft, 3))/3) %>%
+    dplyr::select(-c(x_ft, y_ft, leadDist_ft, leadmph))
+
+return(dataframe)
+}
+
+```
+
+TO DO - EXPORT A WORKSPACE AND A DATA SET HERE FOR USE
+
+# 6. Data Intake and Cleaning Mega-Routine
+
+```{r mega_routine, cache = TRUE}
+my_data <- uploadGeodata("//jove.design.upenn.edu/Dept-Shares/prax/01 Project Folders/2019_Annenberg_GeoScanning/inputData/Test kml and json timeline data/Test kml and json timeline data/multi_json_test") %>%
+  cleanDates(., "2019-04-22 21:30:45", "2019-08-05 15:17:47", "file1.json") %>% # parameter
+  cleanDates(., "2019-04-22 21:30:45", "2019-08-05 15:17:47", "file2.json") %>% # parameter
+  stayevent(., 
+            coor = c("lon","lat"), 
+            time = "datetime", 
+            dist.threshold = 100/3.28084, # conversion to feet PARAMETER
+            time.threshold = 5, # PARAMETER
+            time.units = "mins", 
+            groupvar = "filename") %>%
+  mutate(rg_hr = radiusofgyration(., 
+                                  coor = c("lon","lat"), 
+                                  time = "datetime", 
+                                  time.units = "hour", # PARAMETER
+                                  groupvar = "filename")) %>%
+  spaceTimeLags(.)
+
+```
+
+# 6. Explore Geolocation Data
+
+We can explore our data using a number of routines to understand our sample's date range, time-space elements, sampling rate, subject's interpolated speed. daily and weekly patterns and more.
+
+## 6.1. Timeseries of observations by subject
+
+Data volume can be examined spatially and temporally by subject. This can be done by facetting time-series data by subject or by plotting multiple subjects on one time series. The more subjects you have, the messier this can get.
+
+```{r time_series_by_id, cache = TRUE}
+ggplot(cleanData, aes(as.Date(datetime)))+
+    geom_freqpoly(bins = 50) +
+    scale_x_date((date_breaks = "1 month"))+
+    facet_wrap(~filename, scales = "free")+
+    labs(
+        title = "Time series of geo-location hits by subject",
+        y = "Number of observations",
+        x = "Date (1 month bins)")+
+    plotTheme
+```
+
+```{r time_series_by_id_2, cache = TRUE}
+ggplot(cleanData, aes(as.Date(datetime)))+
+    geom_freqpoly(aes(color = filename), bins = 50) +
+    scale_x_date((date_breaks = "1 month"))+
+    labs(
+        title = "Time series of geo-location hits by subject",
+        y = "Number of observations",
+        x = "Date")+
+    plotTheme
+```
+
+We can group our data into daily bins using the `floor_date` function and look at how many geolocation hits we are seeing on a daily basis. We group each observation into daily bins and `tally` the number of observations. The `floor_date` function is quite useful and we can use it to create some daily.
+
+```{r daily_bar_plot, cache = TRUE}
+
+ggplot(cleanData %>%
+         mutate(intervalDaily = floor_date(ymd_hms(datetime), unit = "1 day")) %>%
+         group_by(intervalDaily, filename)%>%
+         tally())+
+  geom_bar(aes(x = intervalDaily, y = n), stat = "identity")+
+  facet_wrap(~filename)+
+  labs(
+        title = "Geolocation Hits per Day by Subject",
+        y = "Number of observations",
+        x = "Date")+
+  plotTheme
+
+```
+
+## 6.2. Spatial extent of data
+
+We can examine the spatial extent of our data, but we may have to downsample using the dplyr verb `sample_n()` when we do (plotting too many vector points might make your computer unhappy).
+
+```{r spatial_extent, cache = TRUE}
+ggplot()+
+  geom_sf(data = counties)+
+  geom_sf(data = cleanData, alpha = 0.75, size = 0.5)+
+  labs(
+    title = "Demo geolocation observations",
+    subtitle = "Geometries represent selected PA/NJ/DE counties",
+    caption = "Somebody went to Washington, DC")+
+  facet_wrap(~filename)+
+  mapTheme
+```
+
+## 6.3 Examine Temporal Components of the Data
+
+We can now examine distance on a daily basis and summarize the travel that subjects are doing. This can be done by day-of-the-week as well to determine some characteristics of a subject's weekly routine.
+
+These variables - `week`, `dotw`, `intervalDaily` and `interval60` can be added to `cleanData` if desired.
+
+The summaries used in the `ggplot` calls in these plots can also be used on their own to generate tabular summaries of distance travelled and number of observations per day by day, hour week, etc., for each subject.
+
+For our test data here we can see that we have a couple days of intense travel.
+
+```{r daily_travel_plot, cache = TRUE}
+
+ggplot(cleanData %>%
+         mutate(intervalDaily = floor_date(ymd_hms(datetime), unit = "1 day")) %>%
+         group_by(intervalDaily, filename)%>%
+         summarize(total_lagDist_mi = sum(lagDist_ft, na.rm = TRUE) / 5280))+
+  geom_bar(aes(x = intervalDaily, y = total_lagDist_mi), stat = "identity")+
+  facet_wrap(~filename)+
+  labs(
+        title = "Distance Travelled per day by Subject",
+        y = "Distance (mi)",
+        x = "Date")+
+  plotTheme
+
+```
+
+```{r weekly_breakdown, cache = TRUE}
+
+ggplot(cleanData %>%
+         mutate(interval60 = floor_date(ymd_hms(datetime), unit = "hour"),
+                hour = hour(datetime),
+         week = week(interval60),
+         dotw = wday(interval60),
+         weekend = ifelse(dotw %in% c(6, 7), "weekend", "weekday")) %>%
+         group_by(weekend, hour, filename)%>%
+         summarize(total_lagDist_mi = median(lagDist_ft, na.rm = TRUE) / 5280))+
+  geom_line(aes(x = hour, y = total_lagDist_mi, color = weekend))+
+  scale_color_viridis_d()+
+  facet_wrap(~filename)+
+  labs(
+        title = "Median Hourly Distance Travelled per Subject",
+        y = "Distance (mi)",
+        x = "Hour")+
+  plotTheme
+```
+
+## 6.3. Time - Space Sampling Rates
+
+We can examine the relationship between distance travelled and sampling time. The median sampling time is something around four minutes
+
+```{r sampling_quantiles, cache = TRUE}
+quantile(cleanData$lagTime, na.rm = TRUE)
+```
+
+So we want to remove some outliers to examine this relationship more closely.
+
+```{r sampling_rates, warning = FALSE, cache = TRUE}
+ggplot(data = cleanData %>% 
+         filter(lagDist_ft < (5280*2), # distance of less than apx 2 mi
+                abs((lagTime)/60) < 30) )+ # less than 15 min lag
+  geom_point(aes(x= lagDist_ft, y = abs(as.numeric(lagTime)/60)))+
+  #geom_smooth(aes(x= lagDist_ft, y = abs(as.numeric(lagTime)/60)),
+  #            method = "loess", se = FALSE)+
+  scale_y_continuous(breaks=c(0, 0.5, 1, 2, 5, 10, 20, 30))+
+  labs(
+    title = "Relationship between distance and time elapsed between measurements - all subjects",
+    subtitle = "Time lags capped at 30 mins",
+    y = "Lag Time (min)",
+    x = "Lag Distance (ft)")+
+  plotTheme
+
+```
+
+This plot can be run for just one subject by subsetting using an additional argument in the `filter` function applied to `cleanData` in the first chunk of `ggplot2` code like so:
+
+```{r sampling_rates_single, warning = FALSE, cache = TRUE}
+ggplot(data = cleanData %>% 
+         filter(filename == "file1.json",
+                lagDist_ft < (5280*2), # distance of less than apx 2 mi
+                #lagDist > 0.001,
+                abs((lagTime)/60) < 30) )+ # less than 15 min lag
+  geom_point(aes(x= lagDist_ft, y = abs(as.numeric(lagTime)/60)))+
+  #geom_smooth(aes(x= lagDist_ft, y = abs(as.numeric(lagTime)/60)),
+  #            method = "loess", se = FALSE)+
+  scale_y_continuous(breaks=c(0, 0.5, 1, 2, 5, 10, 20, 30))+
+  labs(
+    title = "Relationship between distance and time elapsed between measurements - one subject",
+    subtitle = "Time lags capped at 30 mins",
+    y = "Lag Time (min)",
+    x = "Lag Distance (ft)")+
+  plotTheme
+
+```
+
+This plot can also be facetted by `filename` in order to view multiple subjects alongside one another.
+
+```{r sampling_rates_facet, warning = FALSE, cache = TRUE}
+ggplot(data = cleanData %>% 
+         filter(lagDist_ft < (5280*2), # distance of less than apx 2 mi
+                #lagDist > 0.001,
+                abs((lagTime)/60) < 30) )+ # less than 15 min lag
+  geom_point(aes(x= lagDist_ft, y = abs(as.numeric(lagTime)/60)))+
+  #geom_smooth(aes(x= lagDist_ft, y = abs(as.numeric(lagTime)/60)),
+  #            method = "loess", se = FALSE)+
+  scale_y_continuous(breaks=c(0, 0.5, 1, 2, 5, 10, 20, 30))+
+  labs(
+    title = "Relationship between distance and time elapsed between measurements - one subject",
+    subtitle = "Time lags capped at 30 mins",
+    y = "Lag Time (min)",
+    x = "Lag Distance (ft)")+
+  facet_wrap(~filename)+
+  plotTheme
+
+```
+
+## 5.5. Distributions of Time-Space Lags
+
+Do the distributions of sampling time and distance differ from subject to subject? It would appear so.
+
+We should also be aware of the outliers in our distance lag observations
+
+```{r lag_dist_quantile, cache = TRUE}
+quantile(cleanData$lagDist_ft, na.rm = TRUE)
+```
+
+
+```{r sampling_boxplot, cache = TRUE, warning = FALSE, message = FALSE}
+ggplot(cleanData %>% 
+         ungroup() %>% 
+         filter(is.na(lagTime) == FALSE & is.na(lagDist_ft) == FALSE) %>%
+         filter(abs((lagTime)/60) < 30,
+                lagDist_ft < 100000,
+                lead_lag_avg_mph <100) %>%
+         as.data.frame() %>%
+         dplyr::select(filename, lagTime, lagDist_ft, lead_lag_avg_mph ) %>%
+         gather(-filename, value = "value", key = "variable"))+ 
+  geom_boxplot(aes(y = as.numeric(value), x = filename))+
+  facet_wrap(~variable, scales = "free")+
+  plotTheme
+```
+
+We can explore the relationship between `lead_lag_avg_mph` and measured velocity. Notice that there are numerous NA observations that must be removed for this plot to render - this is because lag and lead calculation necessarily introduces NA for calculations for which there is no lag or lead, and because the original velocity measurements are often NA because of measurement error.
+
+```{r speed_vs_measured, warning = FALSE, message = FALSE, cache = TRUE}
+ggplot()+ 
+  geom_point(data = cleanData %>% 
+               filter(lead_lag_avg_mph<100), 
+             aes(locations.velocity, lead_lag_avg_mph))+
+    labs(
+    title = "Relationship between lead/lag calculated mph and measured mph",
+    y = "Imputed Lead/Lag mph",
+    x = "Measured mph")+
+  plotTheme
+```
+
+
+# 6. Addition of Census Tract Info
+
+We create a function to attach the name and ID of the census tract associated with each observation to our data set.
+
+If the user wishes to use geographic, economic or demographic data from the US Census later on, they can do so through a tabular join using the unique tract GEOID.
+
+The function `joinTracts` fetches tract spatial data from the Census using the `tigris` package and conducts a spatial join with geotracking data using the `sf` package. It takes one argument - an `sf` object of geotracking points, and returns an `sf` object with two new columns attached.
+
+```{r joinTracts, cache = TRUE}
+# joinTracts.R
+
+# Spatially join geotracking data to their respective Census Tracts
+# so they can be associated with demographic and economic data as needed
+
+# Parameters
+
+# geotracking point data - an sf object
+# lat, lon - maybe need these if using a csv with lat/lon
+
+# Returns an sf object with tract GEOID
+# Defaults to 2010-2019 Tracts
+
+joinTracts <- function(pointData){
+  
+  require(tidyverse)
+  require(tigris)
+  require(sf)
+  
+  ifelse(class(pointData) %>% as.list() %>% .[1] != "sf", print("pointData is not an sf object and must be converted. "),
+         "pointData is an sf object")
+  
+  # Load all states using tigris
+  
+  allStates <- states()%>%
+    st_as_sf() %>%
+    st_transform(crs=4326)
+  
+  # Spatial join to determine which states need to be called
+  # for tract spatial data, return only unique State GEOIDs
+
+  myStates <- st_join(pointData %>%
+            st_transform(crs = 4326), 
+            allStates %>%
+            dplyr::select(GEOID) %>%
+            st_transform(crs = 4326), 
+          join = st_intersects, 
+          left = TRUE) %>%
+          as.data.frame() %>% 
+          dplyr::select(GEOID) %>% 
+    unique()
+  
+  # lapply the tracts function from tigris to each unique GEOID,
+  # bind_rows to create a single sf object
+  
+  stateTracts <- lapply(myStates$GEOID, tracts) %>%
+    bind_rows(.)
+  
+  # Join points to tracts, return points with only
+  # the tract GEOID and NAMELSAD attached.
+  
+  pointData_Tracts <- st_join(pointData %>%
+                                     st_transform(crs = 4326), 
+                                   stateTracts %>%
+                                     dplyr::select(GEOID, NAMELSAD) %>%
+                                     st_transform(crs = 4326), 
+                                   join = st_intersects, 
+                                   left = TRUE)
+  
+  return(pointData_Tracts)
+    
+}
+
+# how it works:
+# load all states
+# spatial join to determine states in data set
+# load tracts from those states only
+# spatial join again
+# select out columns you don't need
+# return csv with lat/lon
+
+```
+
+TO DO - output workspace and data sets here
+
+# 6. Addition of Census Data
+
+TO DO - This code still works fine but it's probably better to do it as a tabular join now that Census data is attached.
+
+Census demographic and spatial data can be drawn from the Census Bureau's API and joined to our geoscanning observations using a tabular join. In the previous section, we added a GEOID for the census tracts associated with each observation. 
+
+This section describes the process of calling the Census API using the `tidycensus` package and conducting the spatial join. It also describes the process by which one can call variables from the decennial census and the American Community Survey (ACS), with or without spatial information.
+
+You can learn about the use of `tidycensus` ['https://walkerke.github.io/tidycensus/articles/basic-usage.html'](here).
+
+## 6.1. Load Census API Key
+
+For spatial joins of geotracking information to census geographies (and census demographic data), one can use the `tidycensus` package, but only with a key or token from the US Census Bureau. The code block below demonstrates the loading of one's key - this is Michael Fichman's key, please get your own and insert it into the `census_api_key` function below.
+
+You can get your own key quickly via this [link](https://api.census.gov/data/key_signup.html). Presently, the Commerce Dept and Census Bureau have been somewhat less than reliable creating keys though, it's unclear the reasons for this.
+
+
+```{r census_api, message=FALSE, warning=FALSE, cache=TRUE, include=FALSE, results='hide'}
+# Install Census API Key
+census_api_key("e79f3706b6d61249968c6ce88794f6f556e5bf3d", overwrite = TRUE)
+```
+
+```{r census_api, message=FALSE, warning=FALSE, cache=TRUE,  eval = FALSE}
+# Install Census API Key
+census_api_key("YOUR KEY GOES HERE", overwrite = TRUE)
+```
+
+## 6.2. Load Census Variable Information
+
+We can download libraries of census variable codes for the ACS (e.g. `acs5`) or for specific sheets for the decennial census (e.g. `sf1`) as data frames which we can `View` and sort through in order to find the variables relevant for use.
+
+```{r call_census_variables, cache = TRUE, eval = FALSE}
+v17 <- load_variables(2017, "acs5", cache = TRUE)
+
+View(v17)
+```
+
+## 6.3. Call Census API for Spatial Data
+
+We are going to need to understand the spatial extent of our study area in order to load the Census tracts we will need to join all of our points. Whether the travels of the subjects outside the retailer study area are of interest would necessitate a certain routine to grab the nation's entire census database of counties in order to find every location where a spatial join would be necessary.
+
+For now, we will merely grab data in our demonstration study states which we have saved in the vector that we sent to `tigris` to retrieve county shapefiles earlier.  If we deem the data to be too expansive, we can reduce it to just the counties in our `countiesList` using a `left_join` - the county GEOID is the first five digits of the tract GEOID. If we want more data, we can assemble the entire country, but as spatial data, this may be ungainly.
+
+Be aware that Census Tracts will be redrawn based on the results of the 2020 Census, and some choices will need to be made with respect to appropriate geometries and time periods of study.
+
+We can specify the census variables we'd like to attach - in this case we will simply use `B01003_001` (total population) and `B19013_001`. We create a vector called `myACS_Vars` to store these variables. The call will return data appended with an E for "Estimate" or an "M" for "Margin of Error."
+
+**You should modify `myACS_Vars` and the `rename` argument in the `get_acs` call to specify your own census variables for your analysis.**
+
+```{r my_acs_vars, cache = TRUE}
+myACS_Vars <- c("B01003_001", "B19013_001")
+```
+
+Here we do a `get_acs` call, but a `get_decennial` call, using different variable names, would produce something comparable for a decennial census year.
+
+The result is an `sf` object with geometries attached. We set the projection to `crs = 4326` aka WGS84 so that it is mutually intelligible with our point data. If we are using a large geographic scale, a geographic coordinate system like WGS84 will be better suited than a projected coordinate system.
+
+If this call is made with the `geometry` argument set to `FALSE`, only tabular data will be imported, and the data will be formatted as a tibble or data frame (e.g. a flat file with no geometry).
+
+```{r get_census_tracts, cache = TRUE, message = FALSE, warning = FALSE, results = 'hide'}
+PA_NJ_DE_tracts <- 
+    get_acs(geography = "tract", 
+            variables = myACS_Vars, 
+            year = 2017, 
+            state = c("PA", "NJ", "DE"), 
+            geometry = TRUE, 
+            output = "wide") %>%
+  rename(Total_Pop_est =  B01003_001E,
+         Total_Pop_err = B01003_001M,
+         Med_Inc_est = B19013_001E,
+         Med_Inc_err = B19013_001M) %>%
+  st_transform(crs = 4326)
+```
+
+## 6.4. Join Observations To Census Data
+
+We can conduct a point-in-polygon spatial join of our geoscanning observations to our 2010 census tract geograhies. Each observation will now be associated with the tract in which it is located.
+
+In this code block, we are imparting the relevant tract ID only by using the `select` function and keeping only the `GEOID` and `NAME` identifiers. The idea is that you can join the data to census information at any point using a tabular join by one of these unique IDs. One may keep any and all census variables if you wish.
+
+Note that both data sources need to be in the same coordinate system, in this case `crs=4326` aka WGS84 aka "Web Mercator". This coordinate system is particularly suitable for large geographic areas but uses a linear unit of decmial degrees, and should not be used for spatial analysis where straight line distances or areas are being measured.
+
+```{r join_to_census, cache = TRUE, warning = FALSE, message = FALSE}
+cleanData_join_census <- st_join(cleanData %>%
+                                    st_transform(crs = 4326), 
+                             PA_NJ_DE_tracts %>%
+                               dplyr::select(GEOID, NAME) %>%
+                               st_transform(crs = 4326), 
+                             join = st_intersects, 
+                             left = TRUE)
+```
+
+## 6.5. Summarize and Map Observations by Tract
+
+The data can now be easily summarized and mapped by Census geographies.
+
+Here we will just examine a map of Philadelphia county by subject - but this approach can be used to subset any geography for mapping.
+
+We create a "bounding box" to set the limits of the mapping environment, in this case called 'philaBox'. 
+
+We create a summary of observations by tract. This is done inside of a ggplot call's `geom_sf` geometry call so as not to create a datframe in our environment. Mainly this is a matter of taste and housekeeping for the data environment. But this can be done outside of a ggplot call if desired- one can create a data frame in order to summarize in tabular form or analyze further.
+
+We summarize our data by Census GEOID and subject using the `group_by` and `summarize` functions in sequence. Note that we coerce `cleanData` to a data frame prior to doing this. The `geometry` column of an `sf` object is resistent to being discarded as part of a summarization.
+
+We can then join our summary to the `sf` object consisting of census tract geographies. We send our summary to the "right" side of a `left_join` with our larger tract shapefile. All of the tracts on the "left" are kept - so that we keep all of the tracts with zero observations.
+
+
+```{r map_observations_by_tract, cache = TRUE, message = FALSE, warning = FALSE}
+philaBox <- st_bbox(counties %>%
+                      filter(NAME == "Philadelphia"))
+
+ggplot()+ 
+  geom_sf(data = PA_NJ_DE_tracts, color = "grey", fill = "transparent")+
+  geom_sf(data = cleanData_join_census %>% 
+            as.data.frame() %>% 
+            group_by(GEOID, filename) %>% 
+            summarize(total_obs = n()) %>% 
+            left_join(PA_NJ_DE_tracts, .) %>%
+            filter(is.na(filename) == FALSE),
+          aes(fill = total_obs),
+          color = "grey")+
+  scale_color_viridis_d()+
+  geom_sf(data = counties %>%
+                      filter(NAME == "Philadelphia"),
+          fill = "transparent", color = "black")+
+  facet_wrap(~filename)+
+  xlim(philaBox$xmin, philaBox$xmax)+
+  ylim(philaBox$ymin, philaBox$ymax)+
+  labs(
+    title = "Geoscanning Observations by Census Tract, Philadelphia, PA")+
+  mapTheme
+
+```
+
+We can apply a similar routine to summarize the number of stay events by tract. Here we filter out non-stay-event observations, `group_by` the `stayeventgroup`, retain only the first observation in the stay event and then summarize.
+
+```{r map_stay_event_by_tract, cache = TRUE, message = FALSE, warning = FALSE}
+philaBox <- st_bbox(counties %>%
+                      filter(NAME == "Philadelphia"))
+
+ggplot()+ 
+  geom_sf(data = PA_NJ_DE_tracts, color = "grey", fill = "transparent")+
+  geom_sf(data = cleanData_join_census %>% 
+            as.data.frame() %>% 
+            filter(is.na(stayeventgroup) == FALSE) %>%
+            group_by(stayeventgroup) %>%
+            slice(1) %>%
+            ungroup() %>%
+            group_by(GEOID, filename) %>% 
+            summarize(total_obs = n()) %>% 
+            left_join(PA_NJ_DE_tracts, .) %>%
+            filter(is.na(filename) == FALSE),
+          aes(fill = total_obs),
+          color = "grey")+
+  scale_color_viridis_d()+
+  geom_sf(data = counties %>%
+                      filter(NAME == "Philadelphia"),
+          fill = "transparent", color = "black")+
+  facet_wrap(~filename)+
+  xlim(philaBox$xmin, philaBox$xmax)+
+  ylim(philaBox$ymin, philaBox$ymax)+
+  labs(
+    title = "Stay Events by Census Tract, Philadelphia, PA")+
+  mapTheme
+
+```
+
+## 6.6. Summarize Observations By Tract Characteristics and by Time
+
+We can also tabulate assorted statistics per tract and relate them to underlying census information. 
+
+Here are some examples. Note that in some of the following code, rather than including data manipulation within a ggplot call, we `pipe` manipulations of `cleanData_join_census` right into a `ggplot` call using the `%>%` operator.
+
+First example:
+
+We can calculate the frequency of observation by census tract and relate that to the only demographic variable we have grabbed so far, Median Household Income.
+
+```{r obs_by_income, warning = FALSE, message = FALSE, cache = TRUE}
+cleanData_join_census %>% 
+  as.data.frame() %>% 
+  group_by(GEOID, filename) %>% 
+     summarize(total_obs = n()) %>% 
+  left_join(PA_NJ_DE_tracts, .) %>%
+     filter(is.na(filename) == FALSE) %>% 
+  ggplot()+ 
+  geom_point(aes(y = total_obs, x = Med_Inc_est)) + 
+  facet_wrap(~filename)+
+  labs(
+    title = "Frequency of observation as a function of 2017 tract Median HH Income",
+    y = "Total observations",
+    x = "Median HH Income, 2017 ($)"
+    )+
+  plotTheme
+```
+
+We can calculate the median speed by census tract and relate that to income - how quickly are our subjects, on average, moving through areas of higher or lower poverty?
+
+```{r speed_by_income, warning = FALSE, message = FALSE, cache = TRUE}
+cleanData_join_census %>% 
+  as.data.frame() %>% 
+  dplyr::select(-geometry) %>%
+  group_by(GEOID, filename) %>% 
+     summarize(median_speed = median(lead_lag_avg_mph, na.rm = TRUE)) %>% 
+  left_join(., PA_NJ_DE_tracts) %>%
+     filter(is.na(filename) == FALSE) %>%
+  ggplot()+ 
+  geom_point(aes(y = median_speed, x = Med_Inc_est)) + 
+  facet_wrap(~filename)+
+  labs(
+    title = "Participant's interpolated velocity as a function of tract Median HH Income",
+    y = "Median Velocity (Lead/Lag avg)",
+    x = "Median HH Income, 2017 5-year estimate ($)"
+    )+
+  plotTheme
+```
+
+We can look at a weekday vs weekend breakdown by subject - in this case let's just examine the top 20 tracts in an individual's data set. We do this by taking our `cleandata_join_census` and extracting time information so as to understand which day of the week each observation took place, grouping by time of the week and tract and summarizing. We keep only the top 20 tracts by count for each subject.
+
+As an alternative to chloropleth maps of polygons, we represent them using graduated points by extracting the centroids. As such, we mutate to create lat/lon information by extracting a centroid value, and we create a geom_point upon which we place our graduated point, symboogized by `total_obs`.
+
+```{r weekday_map, cache = TRUE, warning = FALSE, message = FALSE}
+ggplot()+
+  geom_point(data = cleanData_join_census %>% 
+            as.data.frame() %>% 
+            dplyr::select(-geometry)%>%
+    mutate(interval60 = floor_date(ymd_hms(datetime), unit = "hour"),
+           hour = hour(datetime),
+           week = week(interval60),
+           dotw = wday(interval60),
+           weekend = ifelse(dotw %in% c(6, 7), "weekend", "weekday")) %>%
+    group_by(weekend, filename, GEOID)%>%
+    summarize(total_obs = n()) %>% 
+      group_by(filename) %>%
+      top_n(20) %>%
+      left_join(PA_NJ_DE_tracts, .) %>%
+    filter(is.na(filename) == FALSE) %>%
+      mutate(lon=map_dbl(geometry, ~st_centroid(.x)[[1]]),
+                       lat=map_dbl(geometry, ~st_centroid(.x)[[2]])),
+aes(x= lon, y = lat, size = total_obs),
+          color = "red", fill = "white", alpha = 0.3)+
+  scale_color_viridis_d()+
+  geom_sf(data = counties %>%
+                      filter(NAME == "Philadelphia"),
+          fill = "transparent", color = "black")+
+  facet_grid(weekend~filename)+
+  xlim(philaBox$xmin, philaBox$xmax)+
+  ylim(philaBox$ymin, philaBox$ymax)+
+  labs(
+    title = "Most Frequently observed Tracts by Subject, Philadelphia, PA")+
+  mapTheme
+```
+
+# 7. Retailer Locations
+
+TO DO - 
+Describe retailer data, 
+how it is collected, 
+where it comes from, 
+where you can find the latest data, 
+where you can find the code
+
+Set up retailer check to accomodate active/inactive check
+Come back to this routine once stay events and radius of gyration etc., have
+been added so those things can be preserved
+
+## 7.1. Set directory for loading retailer data
+
+```{r retailer_directory, warning = FALSE, message= FALSE,cache=TRUE}
+retailer.directory ='//jove.design.upenn.edu/Dept-Shares/prax/01 Project Folders/2019_Annenberg_GeoScanning/dataOutputs'
+
+setwd(retailer.directory)
+```
+
+
+## 7.2. Load Retailers and Subset Relevant Data
+
+TO DO - describe code chunk
+load most recent retailer data
+make sure names are correct format
+turn into SF
+
+```{r canonical_names, cache = TRUE}
+canonical_names <- c("county", "trade_name", "account", "license_type",
+                     "expiration_date", "lat", "lon", "address_full",
+                     "publish_date", "state", "expired_y_n")
+```
+
+```{r load_shapefile, warning = FALSE, message= FALSE,cache=TRUE}
+setwd(retailer.directory)
+
+retailers <- read.csv("all_Retailers_10_20_20.csv") %>%
+  dplyr::select(canonical_names) %>%
+  mutate_if(is.factor, as.character) %>%
+  mutate(account = as.character(account)) %>%
+  mutate(expiration_date = ymd(expiration_date),
+         publish_date = ymd(publish_date))
+
+retailers %>%
+  filter(is.na(lat) == TRUE) %>%
+  nrow()
+
+retailers <- retailers %>%
+  filter(is.na(lat) == FALSE) %>%
+  st_as_sf(., coords = c("lon", "lat"), crs = 4326)
+```
+
+We can filter retailer data further to only include items in our study area. If using data for multiple states, this may need to be augmented.
+
+# 8. Buffer Retailer Locations
+
+In order to do geoprocessing operations like buffering, we need to reproject our data from a geographic coordinate system projected in decimal degrees, like WGS84, to something projected in a linear unit such as feet. For our study area, the ideal projection is PA State Plane South, (crs = 2272). 
+
+We `st_transform` our `original_plus_geocoded` sf object to `crs = 2272` and `st_buffer` it using a distance of 100 feet to create a new polygon sf object called `retailers_buffer`, which contains all the same tabular information as our original store data.
+
+```{r buffer_retailers, warning = FALSE,cache=TRUE}
+retailers_buffer <- retailers %>%
+  st_transform(crs = 2272) %>%
+  st_buffer(., 100) # the number here is the buffer size in feet
+```
+
+We can check to see if any features are invalid.
+
+```{r validity_check, cache=TRUE}
+retailers_buffer %>%
+  mutate(valid_shape = st_is_valid(.)) %>%
+  filter(is.na(valid_shape) == TRUE)
+```
+
+# 9. Spatial Join
+
+In order to join our geo-location points and our polygons, the points `cleanData` need to be projected as the same crs as `retailers_buffer`, so one or the other must be reprojected using `st_transform`.
+
+The `st_intersects` function is called within the `st_join` function - specified as the specific type of spatial join we wish to execute. We are making a left join `left = TRUE` so that we keep all of our geolocation observations while joining the information related to a buffered area which they intersect. We then clean out some extraneous information about the stores using the `select` command.
+
+The resulting sf object, `cleanData_join_buffers` will be the data set which will allow us to measure "exposure" to point-of-sale tobacco sites, ads etc.,
+
+```{r join_locations_and_buffers, warning = FALSE, cache=TRUE}
+cleanData_join_buffers <- st_join(cleanData %>%
+                                 st_transform(crs = 4326), 
+                             retailers_buffer %>%
+                               st_transform(crs = 4326), 
+                             join = st_intersects, 
+                             left = TRUE)
+```
+
+# 10. Measure Exposure
+
+To measure exposure, we filter out observations which lack an `account` for a joined retailer, and group observations by `month`, `year`, `day`, `filename` (eg subject), `trade_name` and `id` (eg retailer). We could be even more specific if we believe there are likely to be multiple subject-retailer exposures in a given day, grouping further by hour.
+
+Most of these exposure incidents do not have any residence time associated with them - e.g. just one point in a buffer. We create several variables which allow us to further determine whether or not an interscting point-in-polygon incident is actually an exposure. By carrying along our inputed and measured speed variables and time lag variables we can figure out if there was a passby at high speed or actually some lingering.
+
+The variables we create are as follows:
+
+`duration_seconds` - total exposure duration of grouped points at one retailer on one day. Equals zero if just one point.
+
+`max_lead_lag_mph` - for all grouped points at one retailer on one day, the max value of imputed lead/lag velocity.
+
+`range_lead_lag_mph` - For all grouped points at one retailer on one day, the range of imputed lead/lag velocity.
+
+`max_measured_mph` - For all grouped points at one retailer on one day, the max value of measured lead/lag velocity. This value is likely to be `NA` because of measurement error.
+
+`three_time_lags_sec` - For all grouped points at one retailer on one day, the mean value of each observation's averaged three distance lags.
+
+`license_created` - The date associated with the creation/renewal of the retailer license in the data set (be careful - the license database is periodically updated, and may have new renewal dates that post-date exposures to the same location under a previous license).
+
+`license_expiration` - Expiration date of retailer license
+
+`license_active` - A variable which indicates whether the license was active at the time of the exposure measurement.
+
+TO DO - Add a stay event and/or radius of gyration variable here
+TO DO - Update the data check for active licensure
+TO DO - Update to include stay event information
+TO DO - Incorporate crssuggest?
+
+Checking for active licensure may involve creating a separate input which tracks the initial creation and ultimate expirations of retailers in the data set because license databases do not seem to overwrite each year.
+
+```{r exposure_durations, cache=TRUE}
+exposure_durations <- cleanData_join_buffers %>%
+            filter(is.na(account) == FALSE) %>%
+            mutate(month = month(datetime),
+                   year = year(datetime),
+                   day = day(datetime)) %>%
+            group_by(month, year, day, filename, trade_name, account, license_type, expiration_date,
+                     address_full, publish_date, state, expired_y_n) %>%
+            summarize(duration_seconds = max(datetime) - min(datetime),
+                      max_lead_lag_mph = max(lead_lag_avg_mph),
+                      range_lead_lag_mph = max(lead_lag_avg_mph) - min(lead_lag_avg_mph),
+                      max_measured_mph = max(locations.velocity),
+                      three_time_lags_sec = mean(mean_3_lagDist_ft),
+                      license_created = min(created_at),
+                      license_expiration = max(expiration), 
+                      min_datetime = min(datetime),
+                      max_datetime = max(datetime)) %>%
+  mutate(license_active = ifelse(min_datetime < as.POSIXct(license_expiration) & max_datetime < as.POSIXct(license_expiration), "ACTIVE", "INACTIVE"))
+```
+
+# 11. Spatialize Exposure Risk Using a Fishnet
+
+This is a demonstration routine.
+
+We can create a "surface" which reflects some measure of the underlying exposure conditions. This can be done either by a rule-based set of assumptions based on independent variables only (e.g. each cell within a certain distance of a store has an exposure score to one or more stores). Alternately, the surface could be the product of the observed relationship between exposure and craving such that it can be based on the actual outcomes to be expected.
+
+## 11.1. Create the fishnet
+
+We create a polygon "fishnet" to the extent of our study area (e.g. our Counties), which has been reprojected to a NAD 83 PA State FIPS CRS with a linear unit of feet. This "fishnet" is basically a polygon version of a raster layer, the resolution corresponds to the `cellsize` parameter, which can be altered depending on the scale deemed appropriate.
+
+In this example code block, we merely use the county of Philadelphia.
+
+```{r make_fishnet, warning = FALSE, message= FALSE, cache = TRUE}
+fishnet <- st_make_grid(counties %>%
+            filter(NAME == 'Philadelphia')%>%           
+            st_transform(crs = 3365), 
+            cellsize = 1000) %>% #size in feet
+  st_sf() %>%
+  st_transform(crs = 4326)
+```
+
+We can crop our fishnet by our study area (again, for demo purposes, just the county of Philadelphia) and apply a `uniqueID` to each cell. We can also create a lat/lon centroid point for each cell using the `st_centroid` function. This will come in handy later.
+
+```{r crop_fishnet, warning = FALSE, message= FALSE, cache = TRUE}
+fishnet <- fishnet[counties %>% filter(NAME == "Philadelphia"),] %>%
+  mutate(uniqueID = rownames(.)) %>%
+  select(uniqueID) %>%
+  mutate(lon=map_dbl(geometry, ~st_centroid(.x)[[1]]),
+         lat=map_dbl(geometry, ~st_centroid(.x)[[2]]))
+```
+
+## 11.2. Join and summarize retailer density by grid cell
+
+MF NOTE: THIS HAS BEEN UPDATED TO CORRECT AN ERROR (9/17)
+
+For each grid cell we see how frequently the 100 foot buffers created by our retailer locations intersect our cells. We then bind this information back to our fishnet grid cells.
+
+Alternately, a nearest-neighbor distance approach could be utilized to find the mean straight-line distance to the nearest k retailers for each cell centroid.
+
+This surface represents a sort of rule-based risk surface derived from some assumptions about the effect of exposure, but could be replaced with predictions of risk based on experimental results about the observed relationship between exposure and other predictors and subject behavior.
+
+
+```{r join_fishnet, warning = FALSE, message= FALSE, cache=TRUE}
+fishnet_join_buffers <- st_join(fishnet, 
+                             retailers_buffer %>%
+                               st_transform(crs = 4326), 
+                             join = st_intersects, 
+                             left = TRUE) %>%
+  select(uniqueID, address_full, trade_name) %>%
+  group_by(uniqueID) %>% 
+  tally() %>% 
+  mutate(n = ifelse(n == 1, 0, n)) %>% 
+  rename(exposures_100ft = n) %>%
+  as.data.frame() %>%
+  select(-geometry) %>%
+  left_join(fishnet, .)
+```
+
+As an additional visualization - let's examine the density of retailers. We can create a basemap later for visualizing our study area that will allow for some better reader comprehension of the geography.
+
+```{r fishnet_density_map_2, warning = FALSE, message= FALSE, cache=TRUE}
+ggplot()+ 
+  geom_sf(data = counties %>%
+            filter(NAME == 'Philadelphia'),
+          fill = "transparent")+
+  geom_sf(data = fishnet_join_buffers %>%
+            filter(exposures_100ft>0), 
+          aes(fill = exposures_100ft), 
+          color = "transparent") +
+  scale_fill_viridis_c(option = "plasma")+
+  mapTheme
+```
+
+We can also overlay our subject observations, here cropped to the bounding box of the city, but they can be spatially clipped to the precise geography as well:
+
+```{r fishnet_density_map_plus_subjects_2, cache=TRUE, warning= FALSE}
+ggplot()+ 
+  geom_sf(data = counties %>%
+            filter(NAME == 'Philadelphia'),
+          fill = "transparent")+
+  geom_sf(data = fishnet_join_buffers %>%
+            filter(exposures_100ft>0), 
+          aes(fill = exposures_100ft), 
+          color = "transparent") +
+  scale_fill_viridis_c(option = "plasma")+
+  geom_point(data = cleanData %>%
+               st_transform(crs = 4326) %>%
+               #filter(filename == "file1.json") %>%
+               st_crop(., fishnet_join_buffers)%>%
+               mutate(lon=map_dbl(geometry, ~st_centroid(.x)[[1]]),
+                      lat=map_dbl(geometry, ~st_centroid(.x)[[2]])), 
+             aes(x = lon, y = lat, color = filename), alpha = 0.3)+
+  mapTheme
+```
+
+# 12. Project status
+
+## 12.1. Phase 3
+
+Basic outline of data intake, retailer geolocation and buffering, spatial joining and summary is complete. Phase 4 contains the general scope for the data wrangling tasks associated with scaling the code to a "production" version and expanding the geographic scale and number of subjects described in this document. This involves the creation and managment of longitudinal, multi-state retailer databases, additional data visualization and description, data structure routines to accomodate experimental designs and more.
+
+## 12.2. Phase 4
+
+
+**Data wrangling:**
+
+- DONE: Coalesce multi-state longitudinal retailer information with a start and end date for retailer licensure and unique ID (for NJ data, which lacks this). Multi-state coalescence and multi-temporal coalescence will require merging data standards. This will likely need to be done on an ongoing basis as retailer info is continually updated. Create logic to cross check exposures against this date range. Based on data addition / loss, create geocoding routine for new data. Integrate the use of SODA API for regular calls to the PA database. (See Appendix 2 of this document)
+
+- DONE: Geocode the full retailer dataset including all of NJ and PA observations without spatial information, including potential data research into un-geocodable locations. This may involve updating geocoding routines to use `tidygeocoder` and not the Google Maps API or investing in a Google developer account for the project. Retailer-by-retailer research may be necessary. See Appendix 2 for more information.
+
+- IN PROGRESS: Update the exposure point-in-polygon join to include a check for whether the observation happened within a time window where the license was active.
+
+- HOLD: Add CVS information to spatial database
+
+- IN PROGRESS: Using `tidycensus` API package, add relevant census variables to join to geotracking observations as dictated by research needs.
+
+- Brad: 'user to supply discrete time bins (unique to each subject) of 1-2 hours and get summary statistics (e.g., exposure duration, average gini by census tract) for each bin'
+
+**Data Management:**
+
+- HOLD: Create a file structure and sub-routines for storing data and cleaning participant data on intake.
+
+- DONE: Create a management routine and separate code workflow for coalescing and maintaining retailer database. (See Appendix 2 of this document)
+
+- NOT SURE: Create conventions to move data storage to "PennBox" using `boxr`.
+
+- NOT SURE: Create and maintain metadata and a data library associated with ongoing research and documentation associated with a file structure and data standards.
+
+- IN PROGRESS: Get timeframe for each subject or group of subjects - create this as an input, each subject with a date range
+
+**Project conceptualization and modeling:**
+
+- IN PROGRESS: Formalize quantitative notions of exposure and codify the logic in the code base (stay events etc)
+
+- HOLD: Build data structures and variables necessary to support modeling process.
+
+- HOLD: Assess viability of first round of data collection in modeling context.
+
+- DONE: Expand geographic scope to additional states and areas as specified by research needs.
+
+- Explore analytical possibilities of the fishnet aka the "risk surface" including a predicted risk surface based on experimental results (most powerful) or known relationships drawn from research.
+
+**Spatial interpolation:**
+
+- Interpolate a route for each subject between known observations (if possible). Link this to the street network (difficult) or straight line tracts in between observations (a bit easier)
+
+**App Development:**
+
+- DONE: Create leaflet intake tool which displays retailers
+
+
+# 13. Appendix 1. - KML Loading
+
+Previous versions of this code base used kml data. For reasons previously enumerated, JSON is preferrable. The functional but retired code base is below. It is designed to pull a list of kml files from a folder and transform them into a flat file.
+
+## 13.1. Set Up Function Parameters
+
+```{r setwd_kml, warning = FALSE, message= FALSE,cache=TRUE, eval = FALSE}
+file.directory ='//jove.design.upenn.edu/Dept-Shares/prax/01 Project Folders/2019_Annenberg_GeoScanning/inputData/Timeline/Timeline/AllData_T3'
+
+setwd(file.directory)
+
+file.name <- list.files(path=file.directory, pattern = "*.kml")
+```
+
+## 13.2. ReadKML function
+
+This function parses the kml text to look for particular strings which correspond to the date, time and coordinate data we need to run our analysis. Because the kml exports we have chosen to use have assorted missing carriage returns in their bodies and other weird syntax problems, they do not run with standard drivers using `sf` in R or in ESRI software - hence the elaborate text parsing routine.
+
+```{r ReadKML, warning = FALSE, message= FALSE,cache=TRUE, eval = FALSE}
+ReadKML <- function(filename){
+  kml.text <- readLines(filename)
+  # Get strings with the word 'coord' in it
+  coords <- kml.text[grep("<gx:coord>", kml.text)]
+  datetime <- kml.text[grep("<when>", kml.text)]
+  # Get the numbers out from coords
+  coords <- data.frame(str_match(coords, "\t\t\t\t<gx:coord>(.*?)</gx:coord>")[,2])
+  coords <- data.frame(str_split_fixed(coords[,1], " ", 3), stringsAsFactors = FALSE)
+  coords <- data.frame(sapply(coords, as.numeric))
+  names(coords) <- c("longitude", "latitude", "altitude")
+  # process datetime
+  datetime <- data.frame(str_match(datetime, "\t\t\t\t<when>(.*?)</when>")[,2], 
+                         stringsAsFactors = FALSE)
+  datetime[,1] <- as.POSIXct(datetime[,1], format="%Y-%m-%dT%H:%M:%SZ")
+  names(datetime) <- "datetime"
+  id <- substr(filename, 1, nchar(filename)-4)
+  # combine to a data frame
+  data <- cbind(datetime, coords)
+  data$id <- id
+  
+  return(data)
+}
+```
+
+
+## 13.3. Run the Function
+
+We loop through file names to run the text parsing routine for each file and subsequently `rbind` them - binding the rows together.
+
+If you get an error that says "incomplete final line" - this means that the file itself doesn't have a carriage return or "EOL" End of Line character. This can be added manually.
+
+The output is called `gt.track`.
+
+```{r create_gt.track, warning = FALSE, message= FALSE,cache=TRUE, eval = FALSE}
+gt.track <- NULL
+
+for (i in file.name) {
+  location <- ReadKML(i)
+  gt.track <- rbind(gt.track, location)
+}
+
+```
+
+# 14. Appendix 2 - Importing And cleaning Retailer Data Using SODA API
+
+TO DO - Note updated retailer code base, describe it and reference it by filename
+
+# 15. To Do
+
+-Add radius of gyration DONE
+-Add stay event (how long? how big a radius?) DONE
+-Figure out how these work with our other exposure routines (e.g. part of a stay event?? is RG important?) THIS IS A PARAMETER
+-Incorporate leaflet routine on intake, leaflet routine of stay events etc.,
+- Document and refer to retailer routine
+- Modify exposure routine to reflect our retailer data names.
+- Data dictionary
+
+Geoscan data meeting:
+
+-Census workflow and exposure workflows should be separated (one can do either/or - or both)
+- It would be easier if certain parts were functionalized (Nicole)
+- CAndidates - tidycensus call
+- Data quality checks...
+- Workflow that is only cleaning ... allowing people to start
+with a cleaned data set for analytics (an R workspace AND a set of csv outputs)..
+Should this be a starting workspace? (Brad thinks so)
