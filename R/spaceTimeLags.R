@@ -33,4 +33,4 @@ dataframe <- dataframe %>%
 return(dataframe)
 }
 
-test <- spaceTimeLags(cleanData)
+# test <- spaceTimeLags(cleanData)
