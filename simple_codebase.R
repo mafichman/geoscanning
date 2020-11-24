@@ -23,7 +23,9 @@ library(Mobility)
 
 source("R/uploadGeodata.R")
 source("R/cleanDates.R")
-source("R/spaceTimeLags.R")
+source("R/spaceTimeLags.R") 
+#BM: spaceTimeLags results in error: Error in eval(lhs, parent, parent) : object 'cleanData' not found 
+#BM: but the function still loads
 source("R/intakeRetailers.R")
 source("R/bufferAndJoin.R")
 source("R/joinTracts.R")
@@ -51,7 +53,11 @@ cleanData <- uploadGeodata("Data/Geotracking/multi_json_test") %>%
                                   time = "datetime", 
                                   time.units = "hour", # PARAMETER
                                   groupvar = "filename")) %>%
-  spaceTimeLags(.)
+  spaceTimeLags(.) # BM: could add a parameter for crs here
+# BM: Warning message from NYU function:
+# `group_by_()` is deprecated as of dplyr 0.7.0.
+# Please use `group_by()` instead.
+# See vignette('programming') for more help
 
 #######
 
