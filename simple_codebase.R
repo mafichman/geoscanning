@@ -70,7 +70,7 @@ cleanData <- uploadGeodata("Data/Geotracking/multi_json_test") %>%
 
 # save.image("your_file_path/fileName.RData")
 # st_write(cleanData, "your_file_path/fileName.shp")
-# write.csv(cleanData %>% as.data.frame() %>% "yourfile_path/fileName.csv")
+# write.csv(cleanData %>% as.data.frame(), "yourfile_path/fileName.csv")
 
 #######
 
@@ -101,5 +101,5 @@ cleanData_Retailers_Tracts <- cleanData %>%
 
 # save.image("your_file_path/fileName.RData")
 # st_write(cleanData_Retailers_Tracts, "your_file_path/fileName.shp")
-# write.csv(cleanData_Retailers_Tracts %>% as.data.frame() %>% "yourfile_path/fileName.csv")
+# write.csv(cleanData_Retailers_Tracts %>% as.data.frame(), "yourfile_path/fileName.csv")
   
