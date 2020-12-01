@@ -90,7 +90,6 @@ retailers <- intakeRetailers("Data/Retailers/all_Retailers_10_20_20.csv")
 # 4. A buffer size in the linear units of the crs - (defaulted below to 100 feet)
 
 cleanData_Retailers_Tracts <- cleanData %>%
-  ungroup()%>%
   bufferAndJoin(retailers, ., 2272, 100) %>%
   joinTracts(.)
 
