@@ -69,7 +69,6 @@ cleanData <- uploadGeodata("Data/Geotracking/multi_json_test") %>%
 # to write out a workspace and/or csv and shapefile versions of your data
 
 # save.image("your_file_path/fileName.RData")
-# st_write(cleanData, "your_file_path/fileName.shp")
 # write.csv(cleanData %>% as.data.frame(), "yourfile_path/fileName.csv")
 
 #######
@@ -91,6 +90,7 @@ retailers <- intakeRetailers("Data/Retailers/all_Retailers_10_20_20.csv")
 # 4. A buffer size in the linear units of the crs - (defaulted below to 100 feet)
 
 cleanData_Retailers_Tracts <- cleanData %>%
+  ungroup()%>%
   bufferAndJoin(retailers, ., 2272, 100) %>%
   joinTracts(.)
 
@@ -100,6 +100,5 @@ cleanData_Retailers_Tracts <- cleanData %>%
 # to write out a workspace and/or csv and shapefile versions of your data
 
 # save.image("your_file_path/fileName.RData")
-# st_write(cleanData_Retailers_Tracts, "your_file_path/fileName.shp")
 # write.csv(cleanData_Retailers_Tracts %>% as.data.frame(), "yourfile_path/fileName.csv")
   

@@ -68,3 +68,5 @@ joinTracts <- function(pointData){
 # spatial join again
 # select out columns you don't need
 # return csv with lat/lon
+
+# Create vignette
