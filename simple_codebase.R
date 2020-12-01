@@ -29,6 +29,7 @@ source("R/spaceTimeLags.R")
 source("R/intakeRetailers.R")
 source("R/bufferAndJoin.R")
 source("R/joinTracts.R")
+source("R/indirectMLM.R")
 
 # Upload data and add space/time indicators
 # Specify the following parameters:
