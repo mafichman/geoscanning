@@ -38,7 +38,8 @@ joinTracts <- function(pointData){
           left = TRUE) %>%
           as.data.frame() %>% 
           dplyr::select(GEOID) %>% 
-    unique()
+    unique() %>% 
+    na.omit()
   
   # lapply the tracts function from tigris to each unique GEOID,
   # bind_rows to create a single sf object
