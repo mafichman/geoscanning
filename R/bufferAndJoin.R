@@ -27,6 +27,7 @@ print(invalidShapes)
 print("invalid shapes")
 
 cleanData_join_buffers <- st_join(geotrackingData %>%
+                                    ungroup()%>%
                                     st_transform(crs = 4326), 
                                   retailers_buffer %>%
                                     st_transform(crs = 4326), 
