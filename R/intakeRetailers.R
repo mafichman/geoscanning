@@ -20,7 +20,7 @@ canonical_names <- c("county", "trade_name", "account", "license_type",
                        "publish_date", "state", "expired_y_n")
   
   retailers <- read.csv(filepath) %>%
-    dplyr::select(canonical_names) %>%
+    dplyr::select(all_of(canonical_names)) %>%
     mutate_if(is.factor, as.character) %>%
     mutate(account = as.character(account)) %>%
     mutate(expiration_date = ymd(expiration_date),
