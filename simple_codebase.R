@@ -24,8 +24,6 @@ library(Mobility)
 source("R/uploadGeodata.R")
 source("R/cleanDates.R")
 source("R/spaceTimeLags.R") 
-#BM: spaceTimeLags results in error: Error in eval(lhs, parent, parent) : object 'cleanData' not found 
-#BM: but the function still loads
 source("R/intakeRetailers.R")
 source("R/bufferAndJoin.R")
 source("R/joinTracts.R")
