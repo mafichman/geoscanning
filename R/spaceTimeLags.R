@@ -28,7 +28,8 @@ dataframe <- dataframe %>%
            leadmph = (leadDist_ft/5280) / (as.numeric(leadTime) / (60*60)),
            lead_lag_avg_mph = (leadmph + lagmph)/2,
            mean_3_lagDist_ft = (lag(lagDist_ft, 1) + lag(lagDist_ft, 2) + lag(lagDist_ft, 3))/3) %>%
-    dplyr::select(-c(x_ft, y_ft, leadDist_ft, leadmph))
+    dplyr::select(-c(x_ft, y_ft, leadDist_ft, leadmph)) %>%
+  ungroup()
 
 return(dataframe)
 }

@@ -15,6 +15,8 @@ library(tidycensus)
 library(lubridate)
 library(jsonlite)
 library(devtools)
+library(leaflet)
+library(leaflet.providers)
 
 devtools::install_github("nyu-mhealth/Mobility")
 library(Mobility)
@@ -59,6 +61,12 @@ cleanData <- uploadGeodata("Data/Geotracking/multi_json_test") %>%
 # `group_by_()` is deprecated as of dplyr 0.7.0.
 # Please use `group_by()` instead.
 # See vignette('programming') for more help
+
+######
+
+# Inspect Data Using A Leaflet map
+
+
 
 #######
 

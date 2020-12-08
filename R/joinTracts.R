@@ -20,6 +20,8 @@ joinTracts <- function(pointData){
   ifelse(class(pointData) %>% as.list() %>% .[1] != "sf", print("pointData is not an sf object and must be converted. "),
          "pointData is an sf object")
   
+  options(tigris_class = "sf")
+  
   # Load all states using tigris
   
   allStates <- states()%>%
