@@ -1,6 +1,6 @@
 # Abbreviated Code Base For Cleaning Geo-Data
 # Michael Fichman / Falk Lab / Geoscanning
-# 11/16/2020
+# 12/8/2020
 
 # Chain the intake functions together
 # preceded by: running functions, loading libraries
@@ -17,6 +17,7 @@ library(jsonlite)
 library(devtools)
 library(leaflet)
 library(leaflet.providers)
+library(leaflet.extras)
 
 devtools::install_github("nyu-mhealth/Mobility")
 library(Mobility)
@@ -30,6 +31,7 @@ source("R/intakeRetailers.R")
 source("R/bufferAndJoin.R")
 source("R/joinTracts.R")
 source("R/indirectMLM.R")
+source("R/geotrackingLeaflet.R")
 
 # Upload data and add space/time indicators
 # Specify the following parameters:
@@ -66,7 +68,13 @@ cleanData <- uploadGeodata("Data/Geotracking/multi_json_test") %>%
 
 # Inspect Data Using A Leaflet map
 
+# Parameters - dataSet, stayEvents
+# If stayEvents is TRUE, the map outputs stay events
+# otherwise it shows all geotracking observations
+# A leaflet map will pop up in your R Studio Viewer
+# Toggle the data by user in the app menu at top right
 
+geotrackingLeaflet(cleanData, stayEvents = FALSE)
 
 #######
 
