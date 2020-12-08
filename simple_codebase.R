@@ -2,11 +2,12 @@
 # Michael Fichman / Falk Lab / Geoscanning
 # 12/8/2020
 
-# Chain the intake functions together
-# preceded by: running functions, loading libraries
-# can these functions be sent to a github repo and loaded externally?
-# after this will be - writing out the workspace, csv and shp
+# Load and clean geotracking data
+# Apply space-time functions and NYU stay events
+# Load Retailers and join to observations
+# Join observations to census tracts
 
+# Load Libraries
 
 library(tidyverse)
 library(sf)
