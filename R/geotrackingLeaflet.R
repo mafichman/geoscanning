@@ -37,7 +37,7 @@ l <- leaflet() %>%
                    radius =~ 1, 
                    fillOpacity =~ 1,
                    color =~ "blue",
-                   label=~paste(datetime, filename, rg_hr ),
+                   label=~paste("datetime:", datetime, ", rg_hr:", rg_hr ),
                    group = df)
     })
   
