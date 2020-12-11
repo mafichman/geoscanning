@@ -3,8 +3,11 @@
 # You do this
 
 # requirements: lat/lon in 4326, grouping called filename, date called datetime (these can be parameterized)
+# Parameter myCRS should be in feet. Go to spatialreference.org to find a 4 digit CRS for your study
+# area if you are doing this outside of Southern PA (the code should work for data nearby but will
+# distort if a large or faraway area is used)
 
-spaceTimeLags <- function(dataframe){
+spaceTimeLags <- function(dataframe, myCRS){
 
 require(tidyverse)
 require(sf)
@@ -15,8 +18,8 @@ dataframe <- dataframe %>%
   filter(is.na(lat) == FALSE & is.na(lon) == FALSE) %>%
   st_as_sf(., coords = c("lon", "lat"), crs = 4326, remove = FALSE) %>%
     ungroup() %>%
-    st_transform(crs = 2272) %>%
-    mutate(y_ft=map_dbl(geometry, ~st_centroid(.x)[[1]]), # add centroid values for labels
+    st_transform(crs = myCRS) %>%
+    mutate(y_ft=map_dbl(geometry, ~st_centroid(.x)[[1]]),
            x_ft=map_dbl(geometry, ~st_centroid(.x)[[2]])) %>%
     group_by(filename)%>%
     arrange(datetime)%>%
@@ -34,4 +37,4 @@ dataframe <- dataframe %>%
 return(dataframe)
 }
 
-# test <- spaceTimeLags(cleanData)
+# test <- spaceTimeLags(cleanData, 2272)

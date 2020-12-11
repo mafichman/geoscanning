@@ -41,6 +41,7 @@ source("R/geotrackingLeaflet.R")
 # using a YYYY-MM-DD HH:MM:SS format
 # 3. Specify the stayevent parameters - dist.threshold in meters, time.units in minutes
 # 4. Specify the time window for measuring radiusofgyration
+# 5. Specify a coordinate system for spaceTimeLags in feet. Default is 2272 for South PA
 
 # Output is an sf object
 
@@ -59,7 +60,7 @@ cleanData <- uploadGeodata("Data/Geotracking/multi_json_test") %>%
                                   time = "datetime", 
                                   time.units = "hour", # PARAMETER
                                   groupvar = "filename")) %>%
-  spaceTimeLags(.) # BM: could add a parameter for crs here
+  spaceTimeLags(., 2272) # BM: could add a parameter for crs here. MF: DONE
 # BM: Warning message from NYU function:
 # `group_by_()` is deprecated as of dplyr 0.7.0.
 # Please use `group_by()` instead.
