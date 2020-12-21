@@ -75,9 +75,11 @@ cleanData <- uploadGeodata("Data/Geotracking/multi_json_test") %>%
 # otherwise it shows all geotracking observations
 # A leaflet map will pop up in your R Studio Viewer
 # Toggle the data by user in the app menu at top right
-# BM: If you're working with more than 10,000 observations, downsample to 10,000 before plotting.
+# BM: If you're working with more than 10,000 observations, downsample to ~10,000 before plotting.
 
-geotrackingLeaflet(cleanData %>% sample_n(., 10000), stayEvents = FALSE)
+geotrackingLeaflet(cleanData %>% 
+                     filter(filename == "file1") %>% # option to select subject(s) in advance
+                     sample_n(., 10000), stayEvents = FALSE)
 
 #######
 
