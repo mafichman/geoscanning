@@ -33,6 +33,7 @@ source("R/bufferAndJoin.R")
 source("R/joinTracts.R")
 source("R/indirectMLM.R")
 source("R/geotrackingLeaflet.R")
+source("R/retailersLeaflet.R")
 
 # Upload data and add space/time indicators
 # Specify the following parameters:
@@ -99,6 +100,10 @@ geotrackingLeaflet(cleanData %>%
 # 1. specify the location of the most recent retailer data set
 
 retailers <- intakeRetailers("Data/Retailers/all_Retailers_10_20_20.csv")
+
+# Visualize the retailers using a leaflet map
+
+retailersLeaflet(retailers)
 
 # Associate retailers and Census tract info to geotracking observations
 
