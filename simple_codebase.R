@@ -1,6 +1,6 @@
 # Abbreviated Code Base For Cleaning Geo-Data
 # Michael Fichman / Falk Lab / Geoscanning
-# 12/8/2020
+# 1 / 8/ 2021
 
 # Load and clean geotracking data
 # Apply space-time functions and NYU stay events
@@ -34,6 +34,7 @@ source("R/joinTracts.R")
 source("R/indirectMLM.R")
 source("R/geotrackingLeaflet.R")
 source("R/retailersLeaflet.R")
+source("R/intakeSummary.R")
 
 # Upload data and add space/time indicators
 # Specify the following parameters:
@@ -61,7 +62,9 @@ cleanData <- uploadGeodata("Data/Geotracking/multi_json_test") %>%
                                   time = "datetime", 
                                   time.units = "hour", # PARAMETER
                                   groupvar = "filename")) %>%
-  spaceTimeLags(., 2272) # BM: could add a parameter for crs here. MF: DONE
+  spaceTimeLags(., 2272) %>%
+  intakeSummary(.)
+
 # BM: Warning message from NYU function:
 # `group_by_()` is deprecated as of dplyr 0.7.0.
 # Please use `group_by()` instead.
