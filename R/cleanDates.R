@@ -27,7 +27,7 @@ cleanDates <- function(df, dateRangeMin, dateRangeMax, fileName){
            dotw = wday(interval60, label=TRUE),
            weekend = ifelse(dotw %in% c("Sun","Sat"), "Weekend", "Weekday"),
            hour = as.numeric(format(interval60, "%H"))) %>%
-    group_by(pID) %>%
+    group_by(filename) %>%
     mutate(week = paste("Week ", as.character(week - min(week) + 1))) %>%
     ungroup() %>%
     dplyr::select(-keep)
