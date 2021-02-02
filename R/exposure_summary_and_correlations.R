@@ -20,6 +20,9 @@ library(anomalize)
 # which makes it more difficult to be an outlier. 
 # Increase alpha to make it easier to be an outlier."
 
+# BM: We should have this group by subject. First step of outlier removal should be to remove outliers within participant.
+# BM: After that, we could also have a check to see if participants themselves on average are outliers, which is unlikely, but worth checking.
+
 cleanData <- cleanData %>%
   mutate(rg_hr.outlier = iqr(rg_hr, verbose = FALSE),
          lead_lag_avg_mph.outlier = iqr(lead_lag_avg_mph, verbose = FALSE),
@@ -35,24 +38,31 @@ correlation.long <-
            lead_lag_avg_mph.outlier == "No" &
            lagDist_ft.outlier == "No" &
            mean_3_lagDist_ft.outlier == "No") %>%
-  dplyr::select(rg_hr, lead_lag_avg_mph, mean_3_lagDist_ft, lagDist_ft, hour) %>%
-  gather(Variable, Value, -rg_hr)
+  dplyr::select(rg_hr, lead_lag_avg_mph, mean_3_lagDist_ft, lagDist_ft, hour, filename) %>%
+  gather(Variable, Value, -c(rg_hr,filename))
 
 correlation.cor <-
   correlation.long %>%
-  group_by(Variable) %>%
+  group_by(filename, Variable) %>%
   summarize(correlation = cor(Value, rg_hr, use = "complete.obs"))
 
+# BM: Plotting all subjects at once takes a long time and is maybe not too informative. 
+# I added a filter to select by subject. Ideally, I think we'd want to be able to run this and generate a pdf of these plots with one page per subject.
+# Making the r = .xx pop more would be helpful. Right now, they're getting lost in the points.
+# Get rid of legend (currently says colour \n a red).
+pID <- "GEO004"
+
 ggplot(correlation.long %>%
-         filter(rg_hr < 20000), aes(Value, rg_hr)) +
-  geom_point(size = 0.1) +
-  geom_text(data = correlation.cor, aes(label = paste("r =", round(correlation, 2))),
-            x=-Inf, y=Inf, vjust = 1.5, hjust = -.1) +
+         filter(rg_hr < 20000, filename == pID), aes(Value, rg_hr)) +
+  geom_point(size = 0.1, alpha = .25) +
+  geom_text(data = correlation.cor %>% filter(filename == pID), 
+            aes(label = paste("r =", round(correlation, 2)), colour = "red"),
+            x=-Inf, y=Inf, vjust = 1.5, hjust = -0.1) +
   geom_smooth(method = "lm", se = FALSE, colour = "black") +
   facet_wrap(~Variable, ncol = 2, scales = "free") +
-  labs(title = "rg_hr as function of continuous variables")
+  labs(title = paste("rg_hr as function of continuous variables for", pID))
 
-
+# BM: This is something we already have in my script. Probably would generate separate plots by subject because n=30 is a lot of facets
 ggplot(cleanData)+
   geom_freqpoly(aes(hour)) +
   facet_grid(dotw~filename, scales = "free")+
@@ -61,15 +71,17 @@ ggplot(cleanData)+
     y = "Number of observations",
     x = "Hour")
 
+# BM: This is something I could add to my script. Probably would generate separate plots by subject because n=30 is a lot of facets
 ggplot(cleanData)+
   geom_point(aes(x =hour, y = rg_hr)) +
-  facet_grid(filename~dotw, scales = "free")+
+  facet_grid(dotw~filename, scales = "free")+
   labs(
     title = "Time series of geo-location hits by subject",
     y = "Radius of gyration",
     x = "Hour")
 
-cleanData_Retailers_Tracts %>% 
+# BM: Seems like you're starting something new here?
+retail_tallies <- cleanData_Retailers_Tracts %>% 
   as.data.frame() %>% ungroup() %>%
   filter(is.na(trade_name)== FALSE) %>% 
   group_by(filename, lat, lon, datetime) %>% 
