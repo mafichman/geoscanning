@@ -32,6 +32,10 @@ cleanDates <- function(df, dateRangeMin, dateRangeMax, fileName){
     ungroup() %>%
     dplyr::select(-keep)
   
+  #correcting the week assignments for Sundays in 2018 because that year started on a Monday, not a Sunday
+  cleaned.df$week[cleaned.df$dotw=="Sun" & year(cleaned.df$interval60)==2018] <- 
+    cleaned.df$week[cleaned.df$dotw=="Sun" & year(cleaned.df$interval60)==2018] + 1
+  
   return(cleaned.df)
     
 }
