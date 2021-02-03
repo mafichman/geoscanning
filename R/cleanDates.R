@@ -28,13 +28,15 @@ cleanDates <- function(df, dateRangeMin, dateRangeMax, fileName){
            weekend = ifelse(dotw %in% c("Sun","Sat"), "Weekend", "Weekday"),
            hour = as.numeric(format(interval60, "%H"))) %>%
     group_by(filename) %>%
-    mutate(week = paste("Week", as.character(week - min(week) + 1))) %>%
+    mutate(week = week - min(week) + 1) %>%
     ungroup() %>%
     dplyr::select(-keep)
   
   #correcting the week assignments for Sundays in 2018 because that year started on a Monday, not a Sunday
   cleaned.df$week[cleaned.df$dotw=="Sun" & year(cleaned.df$interval60)==2018] <- 
     cleaned.df$week[cleaned.df$dotw=="Sun" & year(cleaned.df$interval60)==2018] + 1
+  cleaned.df <- cleaned.df %>%
+    mutate(week = paste("Week", as.character(week)))
   
   return(cleaned.df)
     
