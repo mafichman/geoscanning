@@ -35,6 +35,7 @@ source("R/indirectMLM.R")
 source("R/geotrackingLeaflet.R")
 source("R/retailersLeaflet.R")
 source("R/intakeSummary.R")
+source("R/graphicsFunctions.R")
 
 # Upload data and add space/time indicators
 # Specify the following parameters:

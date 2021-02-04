@@ -80,6 +80,8 @@ ggplot(cleanData)+
     y = "Radius of gyration",
     x = "Hour")
 
+###---- Retailer exposure summary ----
+
 # BM: Seems like you're starting something new here?
 retail_tallies <- cleanData_Retailers_Tracts %>% 
   as.data.frame() %>% ungroup() %>%
