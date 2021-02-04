@@ -60,7 +60,8 @@ ggplot(correlation.long %>%
             x=-Inf, y=Inf, vjust = 1.5, hjust = -0.1) +
   geom_smooth(method = "lm", se = FALSE, colour = "black") +
   facet_wrap(~Variable, ncol = 2, scales = "free") +
-  labs(title = paste("rg_hr as function of continuous variables for", pID))
+  labs(title = paste("rg_hr as function of continuous variables for", pID))+
+  plotTheme
 
 # BM: This is something we already have in my script. Probably would generate separate plots by subject because n=30 is a lot of facets
 ggplot(cleanData)+
@@ -69,7 +70,8 @@ ggplot(cleanData)+
   labs(
     title = "Time series of geo-location hits by subject",
     y = "Number of observations",
-    x = "Hour")
+    x = "Hour")+
+  plotTheme
 
 # BM: This is something I could add to my script. Probably would generate separate plots by subject because n=30 is a lot of facets
 ggplot(cleanData)+
@@ -78,11 +80,12 @@ ggplot(cleanData)+
   labs(
     title = "Time series of geo-location hits by subject",
     y = "Radius of gyration",
-    x = "Hour")
+    x = "Hour")+
+  plotTheme
 
 ###---- Retailer exposure summary ----
 
-# BM: Seems like you're starting something new here?
+# How many exposures for each individual?
 retail_tallies <- cleanData_Retailers_Tracts %>% 
   as.data.frame() %>% ungroup() %>%
   filter(is.na(trade_name)== FALSE) %>% 
@@ -91,3 +94,15 @@ retail_tallies <- cleanData_Retailers_Tracts %>%
   ungroup() %>% 
   group_by(filename) %>% 
   tally()
+
+# Sequence of exposures
+# This doesn't yet cut out the multiple exposures to a single license at once
+
+ggplot()+
+  geom_freqpoly(data = cleanData_Retailers_Tracts %>% 
+               as.data.frame() %>% 
+               ungroup() %>%
+               mutate(exposure_yn = ifelse(is.na(trade_name)== FALSE, "EXPOSURE", "NON-EXPOSURE")),
+             aes(hour, color = exposure_yn))+
+  facet_wrap(~dotw)+
+  plotTheme
