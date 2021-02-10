@@ -20,7 +20,7 @@ cleanDates <- function(df, dateRangeMin, dateRangeMax, fileName){
     mutate(keep = case_when(filename == fileName & 
                             datetime > dateRangeMin & 
                             datetime < dateRangeMax ~ 1)) %>%
-    filter((is.na(keep) == FALSE & filename == fileName) | filename != fileName)%>%
+    filter((is.na(keep) == FALSE & filename == fileName) | filename != fileName) %>%
     mutate(interval60 = floor_date(ymd_hms(datetime), unit = "hour"),
            interval30 = floor_date(ymd_hms(datetime), unit = "30 mins"),
            week = week(interval60),
@@ -31,12 +31,6 @@ cleanDates <- function(df, dateRangeMin, dateRangeMax, fileName){
     mutate(week = week - min(week) + 1) %>%
     ungroup() %>%
     dplyr::select(-keep)
-  
-  #correcting the week assignments for Sundays in 2018 because that year started on a Monday, not a Sunday
-  cleaned.df$week[cleaned.df$dotw=="Sun" & year(cleaned.df$interval60)==2018] <- 
-    cleaned.df$week[cleaned.df$dotw=="Sun" & year(cleaned.df$interval60)==2018] + 1
-  cleaned.df <- cleaned.df %>%
-    mutate(week = paste("Week", as.character(week)))
   
   return(cleaned.df)
     
