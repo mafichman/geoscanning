@@ -93,7 +93,21 @@ retail_tallies <- cleanData_Retailers_Tracts %>%
   slice(1) %>% 
   ungroup() %>% 
   group_by(filename) %>% 
-  tally()
+  tally() %>%
+  rename(exposures = n) %>%
+  left_join(., cleanData_Retailers_Tracts %>% 
+              as.data.frame() %>% ungroup() %>%
+              filter(is.na(trade_name)== FALSE & is.na(stayeventgroup) == FALSE) %>% 
+              group_by(filename, lat, lon) %>% 
+              slice(1) %>% 
+              ungroup() %>% 
+              group_by(filename) %>% 
+              tally() %>%
+              rename(stayevent_exposures = n))
+
+# Should this be joined to the intakeSummary? Like this?
+
+left_join(intakeSummary, retail_tallies)
 
 # Sequence of exposures
 # This doesn't yet cut out the multiple exposures to a single license at once
