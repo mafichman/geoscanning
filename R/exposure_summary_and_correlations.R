@@ -140,13 +140,13 @@ ggplot()+
 
 # This is ready to be a function - needs something for whether retailer was open or closed
 
-cleanData_Retailers_Tracts %>% 
+exposures_by_location <- cleanData_Retailers_Tracts %>% 
   as.data.frame() %>% ungroup() %>%
   filter(is.na(trade_name)== FALSE & lead_lag_avg_mph < 30) %>% 
   group_by(filename, lat, lon, datetime) %>% 
   slice(1) %>% 
   ungroup() %>% 
   mutate(is_stay_event = ifelse(is.na(stayeventgroup) == FALSE, 1, 0))%>%
-  group_by(filename, trade_name, address_full, lat, lon) %>% 
-  summarise(n = n(),
-            n_stay_events = sum(is_stay_event, na.rm = FALSE)) %>% View()
+  group_by(filename, trade_name, address_full, account) %>% 
+  summarise(n_exposures = n(),
+            n_stay_event_exposures = sum(is_stay_event, na.rm = FALSE))
