@@ -47,7 +47,9 @@ correlation.cor <-
   summarize(correlation = cor(Value, rg_hr, use = "complete.obs"))
 
 # BM: Plotting all subjects at once takes a long time and is maybe not too informative. 
-# I added a filter to select by subject. Ideally, I think we'd want to be able to run this and generate a pdf of these plots with one page per subject.
+# I added a filter to select by subject. 
+# Ideally, I think we'd want to be able to run this and generate a pdf of these plots 
+# with one page per subject.
 # Making the r = .xx pop more would be helpful. Right now, they're getting lost in the points.
 # Get rid of legend (currently says colour \n a red).
 pID <- "GEO004"
@@ -63,7 +65,9 @@ ggplot(correlation.long %>%
   labs(title = paste("rg_hr as function of continuous variables for", pID))+
   plotTheme
 
-# BM: This is something we already have in my script. Probably would generate separate plots by subject because n=30 is a lot of facets
+# BM: This is something we already have in my script. 
+# Probably would generate separate plots by subject because n=30 is a lot of facets
+
 ggplot(cleanData)+
   geom_freqpoly(aes(hour)) +
   facet_grid(dotw~filename, scales = "free")+
@@ -73,7 +77,8 @@ ggplot(cleanData)+
     x = "Hour")+
   plotTheme
 
-# BM: This is something I could add to my script. Probably would generate separate plots by subject because n=30 is a lot of facets
+# BM: This is something I could add to my script. 
+# Probably would generate separate plots by subject because n=30 is a lot of facets
 ggplot(cleanData)+
   geom_point(aes(x =hour, y = rg_hr)) +
   facet_grid(dotw~filename, scales = "free")+
@@ -86,6 +91,7 @@ ggplot(cleanData)+
 ###---- Retailer exposure summary ----
 
 # How many exposures for each individual?
+# This needs something about whether retailers were expired
 retail_tallies <- cleanData_Retailers_Tracts %>% 
   as.data.frame() %>% ungroup() %>%
   filter(is.na(trade_name)== FALSE) %>% 
@@ -129,3 +135,18 @@ ggplot()+
              aes(hour, color = exposure_yn))+
   facet_wrap(~dotw)+
   plotTheme
+
+# Summary of exposures by retailer
+
+# This is ready to be a function - needs something for whether retailer was open or closed
+
+cleanData_Retailers_Tracts %>% 
+  as.data.frame() %>% ungroup() %>%
+  filter(is.na(trade_name)== FALSE & lead_lag_avg_mph < 30) %>% 
+  group_by(filename, lat, lon, datetime) %>% 
+  slice(1) %>% 
+  ungroup() %>% 
+  mutate(is_stay_event = ifelse(is.na(stayeventgroup) == FALSE, 1, 0))%>%
+  group_by(filename, trade_name, address_full, lat, lon) %>% 
+  summarise(n = n(),
+            n_stay_events = sum(is_stay_event, na.rm = FALSE)) %>% View()
