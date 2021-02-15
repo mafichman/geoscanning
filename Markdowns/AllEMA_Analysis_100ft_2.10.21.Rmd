@@ -1,0 +1,2995 @@
+---
+title: "Geo Pilot Analysis of All EMA Responses"
+author: "Bradley D. Mattan"
+date: "2/11/2021"
+output: html_document
+---
+
+This script is based on Michael Fichman's Codebases.
+~/Box Sync/GeoScanning_Data_822815/Data/R Markdown/GeoScanning_CodeBase_12_9_19.html
+https://github.com/mafichman/geoscanning/blob/main/simple_codebase.R
+
+## Loading Packages and Functions
+
+The sf (or simple features) package is the most robust vector-based GIS package in R. It handles geojson, shapefiles and other major spatial data types and performs projection, geoprocessing and other functions within the tidyverse data wrangling framework. Most of the normal operations that can be performed on a dataframe can be performed on an sf object. The only major difference between a dataframe and an sf object is that an sf object has a geometry column which prescribes its geometry, be it point, line or ploygon.
+
+```{r}
+# Packages
+
+library(tidyverse)
+library(sf)
+library(tigris)
+library(tidycensus)
+library(viridis)
+library(lubridate)
+library(mapview)
+library(ggmap)
+library(jsonlite)
+library(RSocrata)
+library(lme4)
+library(lmerTest)
+library(jtools)
+library(interactions)
+library(leaflet)
+library(leaflet.providers)
+library(leaflet.extras)
+library(mediation)
+library(boot)
+library(gridExtra)
+library(ggpubr)
+library(anomalize)
+
+library(devtools)
+devtools::install_github("nyu-mhealth/Mobility")
+library(Mobility)
+
+# Functions 
+
+source("~/Dropbox/geoscanning/R/uploadGeodata.R")
+source("~/Dropbox/geoscanning/R/cleanDates.R")
+source("~/Dropbox/geoscanning/R/spaceTimeLags.R")
+source("~/Dropbox/geoscanning/R/intakeRetailers.R")
+source("~/Dropbox/geoscanning/R/bufferAndJoin.R")
+source("~/Dropbox/geoscanning/R/joinTracts.R")
+source("~/Dropbox/geoscanning/R/indirectMLM.R")
+source("~/Dropbox/geoscanning/R/geotrackingLeaflet.R")
+
+# https://www.amazon.com/Public-Policy-Analytics-Context-Government/dp/036751625X 
+q5 <- function(variable) {as.factor(ntile(variable, 5))}
+qBr <- function(df, variable, rnd) {
+  if (missing(rnd)) {
+    as.character(quantile(round(df[[variable]],0),
+                          c(.01,.2,.4,.6,.8), na.rm=T))
+  } else if (rnd == FALSE | rnd == F) {
+    as.character(formatC(quantile(df[[variable]]), digits = 3),
+                 c(.01,.2,.4,.6,.8), na.rm=T)
+  }
+}
+
+getmode <- function(v) {
+   uniqv <- na.omit(unique(v))
+   uniqv[which.max(tabulate(match(v, uniqv)))]
+}
+
+vif.mer <- function (fit) {
+  ## adapted from rms::vif
+  
+  v <- vcov(fit)
+  nam <- names(fixef(fit))
+  
+  ## exclude intercepts
+  ns <- sum(1 * (nam == "Intercept" | nam == "(Intercept)"))
+  if (ns > 0) {
+    v <- v[-(1:ns), -(1:ns), drop = FALSE]
+    nam <- nam[-(1:ns)]
+  }
+  
+  d <- diag(v)^0.5
+  v <- diag(solve(v/(d %o% d)))
+  names(v) <- nam
+  v
+}
+
+figsize <- function(width, heigth){
+     options(repr.plot.width = width, repr.plot.height = heigth)
+}
+```
+
+## Setting Themes
+
+For making html markdowns with scrollbar so that the figures can be large within a markdown (lines 20-21). See Michael's codebase from 9-17-20.
+
+```{r}
+plotTheme <- theme(
+  plot.title =element_text(size=12),
+  plot.subtitle = element_text(size=8),
+  plot.caption = element_text(size = 6),
+  axis.text.x = element_text(size = 10, angle = 45, hjust = 1),
+  axis.text.y = element_text(size = 10),
+  axis.title.y = element_text(size = 10),
+  # Set the entire chart region to blank
+  panel.background=element_blank(),
+  plot.background=element_blank(),
+  # Format the grid
+  panel.grid.major=element_line(colour="#D0D0D0",size=.75),
+  axis.ticks=element_blank())
+
+mapTheme <- theme(plot.title =element_text(size=12),
+                  plot.subtitle = element_text(size=8),
+                  plot.caption = element_text(size = 6),
+                  axis.line=element_blank(),
+                  axis.text.x=element_blank(),
+                  axis.text.y=element_blank(),
+                  axis.ticks=element_blank(),
+                  axis.title.x=element_blank(),
+                  axis.title.y=element_blank(),
+                  panel.background=element_blank(),
+                  panel.border=element_blank(),
+                  panel.grid.major=element_line(colour = 'transparent'),
+                  panel.grid.minor=element_blank(),
+                  legend.direction = "vertical", 
+                  legend.position = "right",
+                  plot.margin = margin(1, 1, 1, 1, 'cm'),
+                  legend.key.height = unit(1, "cm"), legend.key.width = unit(0.2, "cm"))
+
+palette <- c("#10142A", "#47E9B9", "#F55D60", "#71EA48", "#C148EA", "EAC148" )
+```
+
+## Install Census API Key
+
+For spatial joins of geotracking information to census geographies (and census demographic data), one can use the tidycensus package, but only with a key or token from the US Census Bureau.
+
+The key below is registered to Brad Mattan, Communication Neuroscience Lab, University of Pennyslvania.
+
+```{r}
+census_api_key("25395b90daf32a638370daaf8aeb1ef214ff4e70", overwrite = TRUE)
+```
+
+## Set Working Directory and Load Data
+
+Make sure that your connection to the VPN doesn't break when loading the data. You might end up with a partial data file. It should have 1,480,879 rows when fully loaded.
+
+``` {r}
+#setwd("~/Box Sync/GeoScanning_Data_822815/Data/Original_Pilot") # Box
+setwd("/Volumes/cnlab/GeoScan/Pilot_Analyses/Data/") # ASC server
+
+myData <- read.csv("all_ema_geo_data_081020.csv", stringsAsFactors = FALSE)
+glimpse(myData)
+```
+
+## Loading, Data Trimming, and Computation of Basic Data Quality Metrics
+
+Note that this next block can take several hours to run.
+
+We begin by taking our myData data frame, filtering out observations that are bad or outside the study period. 
+
+We then identify stay events and hourly radius of gyration using the Mobility package from NYU. Hourly radius of gyration (rg_hr) is defined by the standard deviation between locations and their center of mass within one hour (in meters).
+
+We then use the spaceTimeLags function to estimate metrics that will later be used to identify anomalous geolocation data (e.g., when computing exposure to retailers, which requires greater precision). As part of this process, the dataframe is converted to a point sf object, characterized by the geographic (e.g. unprojected) coordinate system WGS84 aka “web mercator” (crs = 4326). WGS84 uses lat/lon decimal degrees, and any geoprocessing that you do which requires linear units of distance (feet, meters etc.,) will require projection first. There are projected coordinate systems for Southeastern PA and its environs used by government geographic agencies, the most common being North American Datum 1983 (NAD83), PA State Plane South, which has crs number 2272 and is projected in feet. The spaceTimeLags function uses st_transform to convert to NAD83.
+
+The variables we create are as follows:
+lagDist_ft
+latTime
+lagmph
+leadTime
+lead_lag_avg_mph
+mean_3_lagDist_ft
+
+Note for Future: We should try to ground truth different scenarios like being on a trolley.
+
+More information about projections and their reference numbers can be found at ‘spatialreference.org.’
+
+``` {r}
+# Loading dates spreadsheet: Make sure that the .csv file is saved in the right format: 2017-02-04 05:00:00
+dates <- read.csv("~/Box Sync/GeoScanning_Data_822815/Data/GeoDates.csv", stringsAsFactors = FALSE)
+dates <- dates %>% mutate(start1 = as_datetime(start_utc),
+                          end1 = as_datetime(end_utc_pre_t2),
+                          start2 = as_datetime(start_utc_post_t2),
+                          end2 = as_datetime(end_utc),
+                          period_flag = NA)
+
+# Some basic housekeeping and data orientation, merging with study dates data
+studyData <- merge(myData %>% filter(is.na(latitude) == FALSE & is.na(longitude) == FALSE) %>% mutate_at("datetime", ~ymd_hms(.)), 
+                   dates, 
+                   by="pID", 
+                   all.x=TRUE) %>% 
+  rename(., filename = pID) %>%
+  filter(is.na(latitude) == FALSE & is.na(longitude) == FALSE) %>%
+  mutate_at("datetime", ~ymd_hms(.))
+
+# Loop through participants and remove bad geometries (0 observations) and data outside of study period (-7302 observations)
+for (p in dates$pID) {
+  start <- as_datetime(dates$start_utc[dates$pID==p])
+  if (p == "GEO053") {
+    end <- as_datetime("2017-08-05 12:00:00") # custom end time to exclude time outside the country.
+  } else {end <- as_datetime(dates$end_utc[dates$pID==p])}
+  studyData <- cleanDates(studyData, start, end, p)
+}
+
+# Flag data outside of track 1 and track 2 periods (230,420 observations)
+# Because this takes a while, here are some potentially faster alternative approaches:
+  # make a list of dates and then join them. Those that don't could be flagged in that way.
+  # or filter based on in or out of period, flag, then merge dataframes back together and sort them. filter(subject_dates %in% dates)
+  # assign period flag based on exclusion period (typically just one, rather than on inclusion periods)
+  # time this using sys.Time() and find the fastest solution
+for (r in 1:dim(studyData)[1]) {
+    studyData$period_flag[r] <- ifelse(is.na(studyData$end1[r]),
+                                               studyData$datetime[r] %within% (studyData$start1[r] %--% studyData$end2[r]),
+                                               (studyData$datetime[r] %within% (studyData$start1[r] %--% studyData$end1[r])) |
+                                               (studyData$datetime[r] %within% (studyData$start2[r] %--% studyData$end2[r])))
+}
+
+# Correcting the week assignments for Sundays in 2018 because that year started on a Monday, not a Sunday
+  studyData$week[studyData$dotw=="Sun" & year(studyData$interval60)==2018] <- 
+    studyData$week[studyData$dotw=="Sun" & year(studyData$interval60)==2018] + 1
+  studyData <- studyData %>%
+    mutate(week = paste("Week", as.character(week)))
+
+# Compute stay events and radius of gyration, convert to sf object, and compute space-time lags
+cleanData <- studyData %>%
+  rename(., lon = longitude, lat = latitude) %>%
+  stayevent(., 
+            coor = c("lon","lat"), 
+            time = "datetime", 
+            dist.threshold = 100/3.28084, # conversion to feet PARAMETER
+            time.threshold = 5, # PARAMETER - consider changing to lower? Ask Tom.
+            time.units = "mins", 
+            groupvar = "filename") %>%
+  mutate(rg_hr = radiusofgyration(., 
+                                  coor = c("lon","lat"), 
+                                  time = "datetime", 
+                                  time.units = "hour", # PARAMETER
+                                  groupvar = "filename")) %>%
+  spaceTimeLags(., 2272) %>% # PARAMETER CRS
+  filter(!is.na(covbin)) # eliminate data outside of coverage bins (-668,275 observations)
+
+# BM: Warning message from NYU function. Michael has raised on issue on the NYU github repository.
+# `group_by_()` is deprecated as of dplyr 0.7.0.
+# Please use `group_by()` instead.
+# See vignette('programming') for more help
+```
+
+## Visualize data with Leaflet
+
+Parameters - dataSet, stayEvents
+If stayEvents is TRUE, the map outputs stay events, otherwise it shows all geotracking observations.
+A leaflet map will pop up in your R Studio Viewer.
+Toggle the data by user in the app menu at top right.
+
+I wouldn't push it too far past 10,000 observations. You might crash your RStudio.
+
+```{r}
+# optional selection of participant(s) and other parameters
+geotrackingLeaflet(cleanData %>% 
+                     filter(filename == "GEO053" & (week == "Week 6" & (dotw == "Sat" | dotw == "Fri"))) %>%
+                     sample_n(., 3747), stayEvents = FALSE)
+```
+
+## Data Export/Import Prior to Joining External Data 
+
+This step saves a workspace (Rdata), shape file (shp), and data file (csv) without external data. At this point, data should only be saved onto the ASC server and nowhere else.
+
+To load the workspace at this step, simply enter into the console: load("filepath/filename.RData")
+
+The shape file writing function doesn't seem to work at the moment.
+
+```{r}
+save.image("/Volumes/cnlab/GeoScan/Pilot_Analyses/Workspaces/Geoprocessing/processed_emageo_021021.RData")
+#st_write(cleanData, "/Volumes/cnlab/GeoScan/Pilot_Analyses/Shapefiles/processed_emageo_112420.shp")
+write.csv(cleanData %>% as.data.frame(), "/Volumes/cnlab/GeoScan/Pilot_Analyses/Data/processed_emageo_021021.csv")
+```
+
+## Add Retailer Data and Census Tract IDs
+
+bufferAndJoin takes four parameters:
+
+1. a retailer database (retailers)
+2. the geotracking data (here as `.`)
+3. A crs (coordinate reference system) - keep default 2272 for Philadelphia area (linear unit - feet)
+4. A buffer size in the linear units of the crs - (defaulted below to 25 feet)
+
+```{r}
+# Load most recent retailer database
+retailers <- intakeRetailers("~/Box Sync/GeoScanning_Data_822815/Data/dataOutputs/all_Retailers_10_20_20.csv")
+
+# Associate retailers and census tract info to geotracking observations
+cleanData_Retailers_Tracts <- cleanData %>% #ungroup(.) %>% sample_n(5000) %>%
+  bufferAndJoin(retailers %>% filter(is.na(lat) == FALSE & is.na(lon) == FALSE), ., 2272, 25) %>%
+  joinTracts(.)
+```
+
+## Data Export/Import after Joining External Data
+
+This step saves a workspace (Rdata), shape file (shp), and data file (csv) with external data joined to the data file. At this point, data should only be saved onto the ASC server and nowhere else.
+
+To load the workspace at this step, simply enter into the console: load("filepath/filename.RData")
+
+```{r}
+save.image("/Volumes/cnlab/GeoScan/Pilot_Analyses/Workspaces/Geoprocessing/processed_emageo_retailers100ft_021021.RData")
+write.csv(cleanData_Retailers_Tracts %>% as.data.frame(), "/Volumes/cnlab/GeoScan/Pilot_Analyses/Data/processed_emageo_retailers100ft_021021.csv")
+```
+
+## Geolocation Data Quality Control
+
+Here, we generate a visualization of geolocated observations by hour, day of the week, week of the study, and participant ID. Unprocessed geo observations are in black, and observations in the final dataset (restricted by EMA coverage bins) are in red.
+
+Tabular data are stored in bintable_raw and bintable_fin.
+Plots can be viewed by typing into the console: plots$GEO004 (update GEO ID accordingly)
+
+h/t to M. Fichman for the mechanics to set up time-space panel data - https://github.com/mafichman/musa508_wk10
+
+Notes to self/Michael: Make this into a function. 
+***Add in visualization of participant speed over the course of the study.***
+***Flag days that are not in the study period***
+***Use lapply and map after turning the below into a function: batch by subject or set of subjects?***
+1-column grid arrange: then put plot b after plot a?
+
+```{r}
+#USER INPUT: Modify parameters and paths as needed
+
+timestamp <- gsub(":","-",substr(gsub("\\s+","_",as.character(Sys.time())),1,16))
+plotpath <- paste("/Volumes/cnlab/GeoScan/Pilot_Analyses/Figures/QC/geolocation_coverage_", timestamp, ".pdf", sep = "")
+tablespath <- "/Volumes/cnlab/GeoScan/Pilot_Analyses/Figures/QC/FigData/"
+
+## DATA TABLES
+
+bintable_raw <- studyData %>% group_by(filename, week, dotw, weekend, hour, period_flag) %>%
+  tally() %>% group_by(filename) %>% 
+  mutate(z.n = scale(n)) %>% ungroup()
+
+bintable_fin <- cleanData_Retailers_Tracts %>%
+  as.data.frame() %>%
+  dplyr::select(-geometry) %>%
+  filter(!duplicated(datetime)) %>% # this removes rows that were duplicated due to the addition of retailer data
+  group_by(filename, week, dotw, weekend, hour) %>%
+  summarize(n = n(),
+            speed = mean(lead_lag_avg_mph, na.rm=TRUE)) %>%
+  group_by(filename) %>%
+  #tally() %>% group_by(filename) %>%
+  mutate(z.n = scale(n),
+         z.speed = scale(speed)) %>% ungroup()
+
+write.csv(bintable_raw, paste(tablespath, "geolocation_coverage_raw_", timestamp, ".csv", sep = ""), row.names = FALSE)
+write.csv(bintable_fin, paste(tablespath, "geolocation_coverage_fin_", timestamp, ".csv", sep = ""), row.names = FALSE)
+
+## PLOTS
+
+plots <- list()
+
+for (p in unique(bintable_raw$filename)) {
+  
+  ## POINT PLOTS:  #fill/color="transparent" if you have a lot of points falling on top of each other (i.e., > 2)
+  
+  flagTypes <- length(unique(bintable_raw$period_flag[bintable_raw$filename==p]))
+  
+  plots[[p]][["points"]] <- ggplot() + 
+  geom_point(data = bintable_raw %>% filter(filename == p & period_flag == TRUE), aes(x = hour, y = n, color = "raw - within study period"), size = 2) +
+  facet_grid(week~dotw) + 
+  labs(title=paste("Geolocation coverage for", p, sep = " "),
+       x = "Hour of the day",
+       y = "Number of tracks") +
+  plotTheme
+  if (flagTypes>1) {
+    plots[[p]][["points"]] <- plots[[p]][["points"]] + 
+      geom_point(data = bintable_raw %>% filter(filename == p & period_flag == FALSE), aes(x = hour, y = n, color = "raw - not in study period"), size = 2)
+  }
+  
+  plots[[p]][["points"]] <- plots[[p]][["points"]] + 
+    geom_point(data = bintable_fin %>% filter(filename == p), inherit.aes = FALSE, aes(x = hour, y = n, color = "cleaned"), size = 1) + 
+    facet_grid(week~dotw) + 
+    if (flagTypes>1) {
+      scale_color_manual(values = c("cleaned" = "red", "raw - not in study period" = "blue", "raw - within study period" = "black"))
+    } else {scale_color_manual(values = c("cleaned" = "red", "raw - within study period" = "black"))}
+    
+
+  ## HEATMAPS:
+
+  # Raw data
+  nmap <- ggplot(bintable_raw %>% filter(filename == p)) +
+  geom_tile(aes(x = hour, y = week, fill=q5(n)), color = "white", size = 0.1, alpha = .75) +
+  scale_fill_viridis(discrete = TRUE, labels=qBr(bintable_raw, "n")) +
+  facet_grid(~dotw) +
+  labs(title=paste("Raw data: Count and z-scored geolocation observations for", p, sep = " "),
+       x = "Hour of the day",
+       y = "Study week",
+       fill = "n by\nquintile") +
+  plotTheme
+  zmap <- ggplot(bintable_raw %>% filter(filename == p)) +
+  geom_tile(aes(x = hour, y = week, fill=z.n), color = "white", size = 0.1, alpha = .75) +
+  scale_fill_viridis() +
+  facet_grid(~dotw) +
+  labs(x = "Hour of the day",
+       y = "Study week",
+       fill = "z score") +
+  plotTheme 
+  plots[[p]][["heat_raw"]] <- ggarrange(nmap, zmap, nrow = 2)
+  
+  # Cleaned data
+  nmap <- ggplot(bintable_fin %>% filter(filename == p)) +
+  geom_tile(aes(x = hour, y = week, fill=q5(n)), color = "white", size = 0.1, alpha = .75) +
+  scale_fill_viridis(option = "inferno", discrete = TRUE, labels=qBr(bintable_fin, "n")) +
+  facet_grid(~dotw) +
+  labs(title=paste("Final cleaned data: Count and z-scored geolocation observations for", p, sep = " "),
+       x = "Hour of the day",
+       y = "Study week",
+       fill = "n by\nquintile") +
+  plotTheme
+  zmap <- ggplot(bintable_fin %>% filter(filename == p)) +
+  geom_tile(aes(x = hour, y = week, fill=z.n), color = "white", size = 0.1, alpha = .75) +
+  scale_fill_viridis(option = "inferno") +
+  facet_grid(~dotw) +
+  labs(x = "Hour of the day",
+       y = "Study week",
+       fill = "z score") +
+  plotTheme
+  plots[[p]][["heat_fin"]] <- ggarrange(nmap, zmap, nrow = 2)
+}
+
+cat("Saving plots for:\n\n")
+pdf(file = plotpath,
+    width = 11,
+    height = 8.5)
+plots
+dev.off()
+```
+
+## Load Study Area Geometries
+
+We can create a list of county names for the Philadelphia / Delaware Valley region, and use this vector to both call spatial data from the census using the tigris package, but also to use as filtering criteria later for our retailer locations. This vector is spelling and case sensitive.
+
+Using the counties function in the tigris package, we call the shapefiles for all of PA, NJ and DE from the Census Bureau’s API, reproject it to WGS84, Web Mercator and then filter for names in the countyList vector we created.
+
+``` {r}
+countyList <- c('Philadelphia', 'Delaware', 'Bucks', 'Montgomery',
+                'Chester', 'New Castle', 'Burlington', 'Camden',
+                'Gloucester', 'Salem', 'Cumberland', 'Berks',
+                'Lancaster', 'Mercer', 'Salem', 'Atlantic', 'Monmouth',
+                'Kent')
+counties <- counties(c('PA', 'NJ', 'DE')) %>%
+  st_as_sf()%>%
+  st_transform(crs=4326) %>%
+  filter(NAME %in% countyList)
+```
+
+## Load Census Data
+
+Census spatial data can be drawn from the Census Bureau’s API and joined to our geoscanning observations using a point-in-polygon join. Each point will then be attached to a census geography, and this geography can be joined, via unique ID known as GEOID, to economic and demographic information from the US Census.
+
+This section describes the process of calling the Census API using the tidycensus package and conducting the spatial join. It also describes the process by which one can call variables from the decennial census and the American Community Survey (ACS), with or without spatial information.
+
+You can learn about the use of tidycensus ‘https://walkerke.github.io/tidycensus/articles/basic-usage.html’.
+
+Lines 134-135: We can download libraries of census variable codes for the ACS (e.g. acs5) or for specific sheets for the decennial census (e.g. sf1) as data frames which we can View and sort through in order to find the variables relevant for use.
+
+We are going to need to understand the spatial extent of our study area in order to load the Census tracts we will need to join all of our points. Whether the travels of the subjects outside the retailer study area are of interest would necessitate a certain routine to grab the nation’s entire census database of counties in order to find every location where a spatial join would be necessary.
+
+For now, we will merely grab data in our demonstration study states which we have saved in the vector that we sent to tigris to retrieve county shapefiles earlier. If we deem the data to be too expansive, we can reduce it to just the counties in our countiesList using a left_join - the county GEOID is the first five digits of the tract GEOID. If we want more data, we can assemble the entire country, but as spatial data, this may be ungainly.
+
+Be aware that Census Tracts will be redrawn based on the results of the 2020 Census, and some choices will need to be made with respect to appropriate geometries and time periods of study.
+
+Line 144: We can specify the census variables we’d like to attach - in this case we will simply use B01003_001 (total population) and B19013_001. We create a vector called myACS_Vars to store these variables. The call will return data appended with an E for “Estimate” or an “M” for “Margin of Error.”
+
+```{r}
+v17 <- load_variables(2017, "acs5", cache = TRUE)
+#v18 <- load_variables(2018, "acs5", cache = TRUE) #this works, but the data fail to load in the next cell
+#View(v17)
+myACS_Vars <- c("B19083_001", #Gini
+                "B19013_001", #median annual household income
+                "B01003_001", #total population - need to ask Michael about other stats like area
+                "B02001_003", #total Black population
+                "B02001_002", #total White population
+                "B17026_001", #total families
+                "B17026_002", #Ratio of income to poverty level of families in the past 12 months < .5
+                "B17026_003", #Ratio of income to poverty level of families in the past 12 months btw .5 and .74
+                "B17026_004", #Ratio of income to poverty level of families in the past 12 months btw .75 and .99
+                "B15003_001", #Educational attainment--total (population 25 years or older)
+                "B15003_022" #Number of 4-year college degrees for people 25 years or older
+                ) 
+```
+
+Here we do a get_acs call, but a get_decennial call, using different variable names, would produce something comparable for a decennial census year.
+
+The result is an sf object with geometries attached. We set the projection to crs = 4326 aka WGS84 so that it is mutually intelligible with our point data. If we are using a large geographic scale, a geographic coordinate system like WGS84 will be better suited than a projected coordinate system.
+
+If this call is made with the geometry argument set to FALSE, only tabular data will be imported, and the data will be formatted as a tibble or data frame (e.g. a flat file with no geometry).
+
+What will I need to keep? Parent geographies/tracts...
+
+```{r}
+# update tidyselect if you get the following error message:
+# 'eval_select' is not an exported object from 'namespace:tidyselect'
+options(tigris_use_cache=TRUE) #keeps the census data in the cache for future R sessions
+PA_NJ_DE_tracts <- 
+    get_acs(geography = "tract",
+            variables = myACS_Vars, 
+            year = 2017, 
+            state = c("PA", "NJ", "DE"), 
+            geometry = TRUE,
+            output = "wide") %>%
+  rename(gini_est =  B19083_001E,
+         gini_err = B19083_001M,
+         medinc_est = B19013_001E,
+         medinc_err = B19013_001M,
+         pop_est = B01003_001E, 
+         pop_err = B01003_001M, 
+         popb_est = B02001_003E, 
+         popb_err = B02001_003M,
+         popw_est = B02001_002E, 
+         popw_err = B02001_002M, 
+         povtot_est = B17026_001E,
+         povtot_err = B17026_001M,
+         pov1_est = B17026_002E,
+         pov1_err = B17026_002M,
+         pov2_est = B17026_003E,
+         pov2_err = B17026_003M,
+         pov3_est = B17026_004E,
+         pov3_err = B17026_004M,
+         edutot_est = B15003_001E,
+         edutot_err = B15003_001M,
+         edu4year_est = B15003_022E,
+         edu4year_err = B15003_022M) %>%
+  mutate(pct_black = popb_est/pop_est,
+         pct_white = popw_est/pop_est,
+         below_pov = (pov1_est+pov2_est+pov3_est)/povtot_est,
+         pct_4yd = edu4year_est/edutot_est) %>%
+  st_transform(crs = 4326)
+```
+
+## Merge GeoScan Data and Census Data
+
+We can conduct a point-in-polygon spatial join of our geoscanning observations to our 2010 census tract geograhies. Each observation will now be associated with the tract in which it is located. (It would be good to update this to 2020 tracts once data for those become available.)
+
+In this code block, we are imparting the relevant tract ID only by using the select function and keeping only the GEOID and NAME identifiers. The idea is that you can join the data to census information at any point using a tabular join by one of these unique IDs. One may keep any and all census variables if you wish.
+
+Note that both data sources need to be in the same coordinate system, in this case crs=4326 aka WGS84 aka “Web Mercator”. This coordinate system is particularly suitable for large geographic areas but uses a linear unit of decmial degrees, and should not be used for spatial analysis where straight line distances or areas are being measured.
+
+```{r}
+cleanData_join_census <- st_join(cleanData_Retailers_Tracts %>%
+                                    st_transform(crs = 4326), 
+                             PA_NJ_DE_tracts %>%
+                               dplyr::select(GEOID, NAME, gini_est, medinc_est, pct_black, pct_white, below_pov, pct_4yd) %>%
+                               st_transform(crs = 4326), 
+                             join = st_intersects, 
+                             left = TRUE)
+```
+
+## Summarize and Visualize Observations by Census Tract
+
+The data can now be easily summarized and mapped by Census geographies.
+
+Here we will just examine a map of Philadelphia county by subject - but this approach can be used to subset any geography for mapping.
+
+We create a “bounding box” to set the limits of the mapping environment, in this case called ‘philaBox’.
+
+We create a summary of observations by tract. This is done inside of a ggplot call’s geom_sf geometry call so as not to create a datframe in our environment. Mainly this is a matter of taste and housekeeping for the data environment. But this can be done outside of a ggplot call if desired- one can create a data frame in order to summarize in tabular form or analyze further.
+
+We summarize our data by Census GEOID and subject using the group_by and summarize functions in sequence. Note that we coerce cleanData to a data frame prior to doing this. The geometry column of an sf object is resistent to being discarded as part of a summarization.
+
+We can then join our summary to the sf object consisting of census tract geographies. We send our summary to the “right” side of a left_join with our larger tract shapefile. All of the tracts on the “left” are kept - so that we keep all of the tracts with zero observations.
+
+```{r}
+#ACROSS ALL PARTICIPANTS
+philaBox <- st_bbox(counties %>%
+                      filter(NAME == "Philadelphia"))
+
+ggplot()+ 
+  geom_sf(data = PA_NJ_DE_tracts, color = "grey", fill = "transparent")+
+  geom_sf(data = cleanData_join_census %>% 
+            as.data.frame() %>% 
+            group_by(GEOID) %>% #, pID
+            dplyr::summarize(total_obs = n()) %>% 
+            left_join(PA_NJ_DE_tracts, .), #%>%
+            #filter(is.na(pID) == FALSE),
+          aes(fill = total_obs),
+          color = "grey")+
+  scale_color_viridis_d()+
+  geom_sf(data = counties %>%
+                      filter(NAME == "Philadelphia"),
+          fill = "transparent", color = "black")+
+  #facet_wrap(~pID)+
+  xlim(philaBox$xmin, philaBox$xmax)+
+  ylim(philaBox$ymin, philaBox$ymax)+
+  labs(
+    title = "Geoscan Observations by Census Tract, Philadelphia, PA")+
+  mapTheme
+```
+
+```{r}
+#FOR SELECTED PARTICIPANTS
+#this works best when visualizing just two participants at a time
+#it breaks if you try to visualize all participants at once
+philaBox <- st_bbox(counties %>%
+                      filter(NAME == "Philadelphia"))
+
+ggplot()+ 
+  geom_sf(data = PA_NJ_DE_tracts, color = "grey", fill = "transparent")+
+  geom_sf(data = cleanData_join_census %>% 
+            as.data.frame() %>% 
+            group_by(GEOID, pID) %>%
+            dplyr::summarize(total_obs = n()) %>% 
+            left_join(PA_NJ_DE_tracts, .) %>%
+            filter(pID=="GEO022"|pID=="GEO078"),
+          aes(fill = total_obs),
+          color = "grey")+
+  scale_color_viridis_d()+
+  geom_sf(data = counties %>%
+                      filter(NAME == "Philadelphia"),
+          fill = "transparent", color = "black")+
+  #facet_wrap(vars(pID), ncol = 2)+ #not sure why, but this stopped working
+  facet_grid(~pID)+ #using facet_grid instead
+  xlim(philaBox$xmin, philaBox$xmax)+
+  ylim(philaBox$ymin, philaBox$ymax)+
+  labs(
+    title = "Geoscan Observations by Participant and Census Tract, Philadelphia, PA")+
+  mapTheme
+```
+
+## Summarize Observations by Tract Characteristics and Time
+
+We can also tabulate assorted statistics per tract and relate them to underlying census information.
+
+Here are some examples. Note that in some of the following code, rather than including data manipulation within a ggplot call, we pipe manipulations of cleanData_join_census right into a ggplot call using the %>% operator.
+
+Example:
+
+We can calculate the frequency of observation by census tract and relate that to the Gini index of economic inequality.
+
+```{r}
+cleanData_join_census %>% 
+  as.data.frame() %>% 
+  group_by(GEOID, pID) %>% 
+     dplyr::summarize(total_obs = n()) %>% 
+  left_join(PA_NJ_DE_tracts, .) %>%
+     filter(pID=="GEO022"|pID=="GEO078") %>% 
+  ggplot()+ 
+  geom_point(aes(y = total_obs, x = gini_est)) + 
+  facet_wrap(~pID)+
+  labs(
+    title = "Frequency of observation as a function of 2017 tract Gini Coefficient",
+    y = "Total observations",
+    x = "Gini, 2017"
+    )+
+  plotTheme
+```
+
+Another example: Plotting tract % White by tract % below poverty
+
+```{r}
+cleanData_join_census %>% 
+  as.data.frame() %>% 
+  dplyr::select(-geometry) %>%
+  group_by(GEOID, pID) %>% 
+     dplyr::summarize(median_income = median(medinc_est, na.rm = TRUE)) %>% 
+  left_join(., PA_NJ_DE_tracts) %>%
+     filter(pID=="GEO022"|pID=="GEO078") %>%
+  ggplot()+ 
+  geom_point(aes(y = below_pov, x = pct_white)) + 
+  geom_smooth(aes(y = below_pov, x = pct_white), method = "lm") +
+  facet_wrap(~pID) +
+  labs(
+    title = "Percent Below Poverty as a function of Percent of Population that is White",
+    y = "Percent of Population below Poverty, 2017 5-year estimate",
+    x = "Percent of Population that is White, 2017 5-year estimate"
+    )+
+  plotTheme
+```
+
+For more cool visualizations by census tract, see Michael's codebase. 
+~/Box Sync/GeoScanning_Data_822815/Data/R Markdown/GeoScanning_CodeBase_12_9_19.html
+
+For some cool visualizations of duration/velocity data, see Michael's codebase. 
+~/Box Sync/GeoScanning_Data_822815/Data/R Markdown/GeoScanning_CodeBase_12_9_19.html
+
+## Computing Exposure to Tobacco Retailers
+
+Immediate Exclusions from Exposure Computations:
+
+Rows without Retailer Info (-750,600 obs with 100-ft buffer; -800,844 obs with 25-ft buffer)
+Hourly Radius of Gyration (-45 obs with 100-ft buffer; -2 obs with 25-ft buffer): Dropping any potential exposure where rg_hr > 160000 meters (i.e., faster than a car can drive; in this dataset, this also means > 3 SD; for more details, see Kirchner et al., 2019, Journal of Healthcare Informatics Research)
+
+We therefore compute several variables that allow us to further determine whether or not an intersecting point-in-polygon incident is actually an exposure. By carrying along our inputed and measured speed variables and time lag variables we can figure out if there was a passby at high speed or actually some lingering. For now, I'm opting to restrict exposure computations to exposure events with a min_lead_lag_mph of no more than 30 mph. This means that exposure events involve at least one geolocated observation where the participant's inferred speed was less than 30 miles per hour.
+
+Speed Information: Each metric computed for all grouped points for a given combination of participant, retailer, stay event, and bin (i.e., "exposure")
+obs - total number of geolocation observations
+rg_hr - average radius of gyration in meters
+duration_seconds - total exposure duration. Equals zero if just one point.
+min_lead_lag_mph - the min value of imputed lead/lag velocity.
+max_lead_lag_mph - the max value of imputed lead/lag velocity.
+range_lead_lag_mph - the range of imputed lead/lag velocity.
+max_measured_mph - the max value of measured lead/lag velocity. This value is likely to be NA because of measurement error. I don't compute it because the participants with MapMob data don't have an app-specific velocity variable.
+three_time_lags_sec - the mean value of each observation’s averaged three distance lags.
+
+A good number of exposure incidents do not have any residence time associated with them - e.g. just one point in a buffer. The median is 2 points in buffer per exposure event, but many of these 2-point exposures are because the same retailer has two licenses. For an example of the same trade_name with two licenses, see GEO004, bin 9, stayeventgroup NA, trade_name KESHAV ASSOCIATES LLC (rows 15512 & 15894). Fortunately, the way I summarize across rows within trade_name (e.g., mean, min, max) should not be affected by duplicated single rows. However, if there is truly more than one observation per exposure event and then there are duplicate rows, this will bias some mean metrics. The solution here is to get rid of duplicate licenses, but this will require more thought and discussion.
+
+License Information:
+license_created - The date associated with the creation/renewal of the retailer license in the data set (be careful - the license database is periodically updated, and may have new renewal dates that post-date exposures to the same location under a previous license).
+license_expiration - Expiration date of retailer license
+license_active - A variable which indicates whether the license was active at the time of the exposure measurement.
+
+Other notes: The retailer data come from 2018. So some of these exposures in the pilot data from 2017 assume that the data from 2018 apply. We could try to get older data from the authorities, but that would involve special requests to the states of PA, NJ, and DE. If we can't do this, we'd want to illustrate the extent to which licenses change over time. For example, we could go back in time on google street view for each exposure (or a sample of these exposures if the total number is unreasonably large.)
+
+PA: 2018, 2020
+NJ: 2018, 2019, 2020
+DE: 2020
+
+Need to decide about what to do with licenses that are of different types at the same address (e.g., retail, OTP--on the premises). Find someone to interview at each state about retail data. Or contact Philly public health department.
+
+```{r}
+exposure_durations <- cleanData_join_census %>%
+  #Dropping bins with radius of gyration over 160 km (see notes)
+  #100-ft buffer: -45 geolocation observations
+  #25-ft buffer: -2 geolocation observations
+            filter(is.na(trade_name) == FALSE & rg_hr < 160000) %>% 
+  #bin-wise exposure: 
+  #rather than using `stayeventgroup`, I'm using `hour` to break up exposures into periods of no more than 1 hour. 
+  #this has the benefit not counting temporally distant NAs in stayeventgroup from being counted as the same exposure
+            group_by(filename, covbin, trade_name, hour) %>%
+            summarize(obs = n(),
+                      rg_hr = mean(rg_hr),
+                      duration_seconds = max(datetime) - min(datetime),
+                      min_lead_lag_mph = min(lead_lag_avg_mph),
+                      max_lead_lag_mph = max(lead_lag_avg_mph),
+                      avg_lead_lag_mph = mean(lead_lag_avg_mph, na.rm=TRUE),
+                      range_lead_lag_mph = max(lead_lag_avg_mph) - min(lead_lag_avg_mph),
+                      #max_measured_mph = max(locations.velocity),          #we don't have velocity data for MapMob subjects
+                      three_time_lags_sec = mean(mean_3_lagDist_ft),
+                      license_created = min(ymd(publish_date)),
+                      license_expiration = max(ymd(expiration_date)), 
+                      min_datetime = min(datetime),
+                      max_datetime = max(datetime),
+                      bin_dur = mean(cbin_dur)) %>%
+  #Dropping exposure events without at least one observation with an inferred speed under 30 mph
+  #100-ft buffer: -758 exposure events
+  #25-ft buffer: -90 exposure events
+  filter(min_lead_lag_mph<30) %>%
+  mutate(license_active = ifelse(min_datetime < as.POSIXct(license_expiration) & max_datetime < as.POSIXct(license_expiration), "ACTIVE", "INACTIVE"))
+
+summary(as.numeric(exposure_durations$duration_seconds))
+hist(as.numeric(exposure_durations$min_lead_lag_mph), breaks=60, xlim=c(0,30))
+
+#Select all exposures to active licenses, but excluding duplicate addresses
+expobin_rates <- exposure_durations %>%
+  filter(license_active=="ACTIVE") %>% #revisit this filter (see notes above about licenses)
+  group_by(filename, covbin) %>%
+  summarize(exposures_all = n()/mean(bin_dur),
+            exposures_unique = (n() - sum(duplicated(geometry)))/mean(bin_dur),
+            expSpeed_m = mean(avg_lead_lag_mph, na.rm=TRUE),
+            expSpeed_sd = sd(avg_lead_lag_mph, na.rm=TRUE))
+  
+cleanData_join_all <- merge(cleanData_join_census, 
+                                  expobin_rates %>% st_set_geometry(NULL), 
+                                  all.x=TRUE, by=c("filename","covbin"))
+#Total coverage bins with exposures:
+#100-ft buffer: 1010 out of 1956 bins
+#25-ft buffer: 622 out of 1956 bins
+```
+
+## Data quality checks
+
+Not needed for analyses in this Rmd. 
+
+Here, I'm looking at how many licenses each unique geometry has. This quick look shows that our retailer data are quite messy. Should discuss with Nicole and/or Michael.
+
+```{r}
+license_data <- cleanData_join_census %>% 
+  as.data.frame() %>%
+  filter(is.na(trade_name) == FALSE) %>%
+  mutate(retailer_point = as.character(geometry)) %>%
+  group_by(retailer_point) %>%
+  summarize(retailers_n = length(unique(trade_name)),
+            addresses_n = length(unique(address_full)),
+            accounts_n = length(unique(account)),
+            licenses_n = length(unique(license_type)),
+            retailers = list(unique(trade_name)),
+            addresses = list(unique(address_full)),
+            accounts = list(unique(account)),
+            licenses = list(unique(license_type)))
+```
+
+Here, I'm looking at relationships between the different movement metrics in the retailer exposure_durations dataframe. Should discuss this with Nicole and/or Michael. These relationships look similar regardless of whether a 25-ft or a 100-ft buffer was used.
+
+Add timeline vs. mapmob
+Print out study dates along with participant IDs or find some way to distinguish between non-compliance and non-study days.
+Look at GEO053 3000 observations per day
+Look at GEO048 for random data loss throughout the day (dropping mapmob data? duplicate rows?)
+
+```{r}
+# Function for computing p value matrices
+cor.mtest <- function(mat, ...) {
+    mat <- as.matrix(mat)
+    n <- ncol(mat)
+    p.mat<- matrix(NA, n, n)
+    diag(p.mat) <- 0
+    for (i in 1:(n - 1)) {
+        for (j in (i + 1):n) {
+            tmp <- cor.test(mat[, i], mat[, j], ...)
+            p.mat[i, j] <- p.mat[j, i] <- tmp$p.value
+        }
+    }
+  colnames(p.mat) <- rownames(p.mat) <- colnames(mat)
+  p.mat
+}
+library("corrplot")
+
+corrdata <- cleanData_join_census %>%
+            filter(is.na(trade_name) == FALSE & rg_hr < 160000) %>% 
+            group_by(filename, covbin, trade_name, stayeventgroup) %>%       #bin-wise exposure
+            summarize(obs = n(),
+                      rg_hr = mean(rg_hr),
+                      duration_seconds = max(datetime) - min(datetime),
+                      min_lead_lag_mph = min(lead_lag_avg_mph),
+                      max_lead_lag_mph = max(lead_lag_avg_mph),
+                      range_lead_lag_mph = max(lead_lag_avg_mph) - min(lead_lag_avg_mph),
+                      #max_measured_mph = max(locations.velocity),          #we don't have velocity data for MapMob subjects
+                      three_time_lags_sec = mean(mean_3_lagDist_ft),
+                      license_created = min(ymd(publish_date)),
+                      license_expiration = max(ymd(expiration_date)), 
+                      min_datetime = min(datetime),
+                      max_datetime = max(datetime),
+                      bin_dur = mean(cbin_dur)) %>% as.data.frame() %>%
+  dplyr::select(-geometry) %>%
+  mutate(exposure_dur = as.numeric(duration_seconds)) %>%
+  dplyr::select(obs,
+                rg_hr,
+                exposure_dur,
+                min_lead_lag_mph,
+                max_lead_lag_mph,
+                range_lead_lag_mph,
+                #max_measured_mph,
+                three_time_lags_sec,
+                bin_dur) %>%
+  na_if("NaN") %>% na_if("Inf")
+p.mat <- cor.mtest(corrdata, use = "pairwise.complete.obs")
+c.mat <- cor(corrdata, use = "pairwise.complete.obs")
+corrplot(c.mat, method="color",  
+         type="upper", 
+         addCoef.col = "black", # Add coefficient of correlation
+         tl.col="black", tl.srt=45, #Text label color and rotation
+         # Combine with significance
+         p.mat = p.mat, sig.level = 0.05, insig = "blank",
+         # Remove diagonal
+         diag = FALSE)
+
+#Dropping any exposures without a single observation that has an imputed speed below 30 mph
+#100-ft buffer: -758 exposure events
+#25-ft buffer: -90 exposure events
+corrdata_sub30_min <- corrdata %>% filter(min_lead_lag_mph<30) #-758 within-bin exposure events
+
+p.mat <- cor.mtest(corrdata_sub30_min, use = "pairwise.complete.obs")
+c.mat <- cor(corrdata_sub30_min, use = "pairwise.complete.obs")
+corrplot(c.mat, method="color",  
+         type="upper", 
+         addCoef.col = "black", # Add coefficient of correlation
+         tl.col="black", tl.srt=45, #Text label color and rotation
+         # Combine with significance
+         p.mat = p.mat, sig.level = 0.05, insig = "blank",
+         # Remove diagonal
+         diag = FALSE)
+
+#Additionally dropping exposures where all observations had imputed speeds below 30 mph
+#100-ft buffer: -649 exposure events
+#25-ft buffer: -68 exposure events
+corrdata_sub30_min_max <- corrdata_sub30_min %>% filter(max_lead_lag_mph<30) #-649 within-bin exposure events
+
+p.mat <- cor.mtest(corrdata_sub30_min_max, use = "pairwise.complete.obs")
+c.mat <- cor(corrdata_sub30_min_max, use = "pairwise.complete.obs")
+corrplot(c.mat, method="color",  
+         type="upper", 
+         addCoef.col = "black", # Add coefficient of correlation
+         tl.col="black", tl.srt=45, #Text label color and rotation
+         # Combine with significance
+         p.mat = p.mat, sig.level = 0.05, insig = "blank",
+         # Remove diagonal
+         diag = FALSE)
+```
+
+Here, I'm doing some quality checking of the cleaned dataset to make sure that the rbins are generally behaving as they should be. 
+
+There are a lot of missing rbin values. Based on an inspection of the randbindata dataframe, it appears that we may have lost some random bins when I merged the EMA data with the geolocation data. The geolocation data were not as continuous as I imagined, meaning that a merge that conserved only geolocation data rows would have dropped any EMA bin data for which we're missing geolocation data. I should return to this in the future, as it may mean that some coverage bins may also be missing.
+
+```{r}
+#Correcting anomalous responses: These really need to be corrected in the merging script
+data <- cleanData_join_census
+data$feelscore_rbin[data$feelscore_rbin==91] <- NA #original response entered as: "Feel#91"
+data$feelscore_cbin[data$feelscore_cbin==50] <- 9
+data$feelscore_rbin[data$feelscore_rbin==72] <- 7 #original response entered as: "Feel 7smoke 2"
+data$feelscore_rbin[data$feelscore_rbin==76] <- 7 #original response entered as: "Feel 7smoke 6"
+data$feelscore_cbin[data$feelscore_cbin==72] <- 7 #original response entered as: "Feel 7smoke 2"
+data$feelscore_cbin[data$feelscore_cbin==41.5] <- 7 #not sure where this number came from, but rbins suggest a score of 7
+data$cravescore_cbin[data$cravescore_cbin==10] <- 9 #correcting an impossible rating that came from Merge_AllEMA_Location.Rmd
+
+randbindata <- data %>%
+  as.data.frame() %>%
+  #this mutate function could be altered to get info about the top 3 locations vs. top location
+  mutate(gini_top = getmode(gini_est),
+         medinc_top = getmode(medinc_est),
+         pct_white_top = getmode(pct_white),
+         pct_black_top = getmode(pct_black),
+         pct_4yd_top = getmode(pct_4yd),
+         below_pov_top = getmode(below_pov)) %>%
+  group_by(pID, covbin, randbin) %>%
+  #filter(pID != "GEO021" & pID != "GEO043" & pID != "GEO048" & pID != "GEO072") %>% # participants with fewer than 20 coverage bins
+  dplyr::summarize(bin_date = unique(date)[1], # [1] because some bins may include midnight
+               bin_period = unique(covbinterval),
+               bin_dur = unique(cbin_dur),
+               study_day = unique(day),
+               day_of_week = unique(dayofweek)[1],
+               study_period = unique(Study_Period),
+               platform_ema = unique(platform_ema),
+               platform_geo = unique(platform),
+               cigarettes = mean(numcigs_cbin, na.rm=TRUE),
+               minutes = mean(mincigs_cbin, na.rm=TRUE),
+               feeling_score_c = mean(feelscore_cbin, na.rm=TRUE),
+               craving_score_c = mean(cravescore_cbin, na.rm=TRUE),
+               feeling_score_r = mean(feelscore_rbin, na.rm=TRUE),
+               craving_score_r = mean(cravescore_rbin, na.rm=TRUE),
+               # merge error: rbin doesn't always appear to have a value
+               feeling_obs = length(na.omit(unique(feelscore_rbin))),
+               craving_obs = length(na.omit(unique(cravescore_rbin))),
+               gini_avg = mean(gini_est, na.rm=TRUE),
+               medinc_avg = mean(medinc_est, na.rm=TRUE),
+               white_avg = mean(pct_white, na.rm=TRUE),
+               black_avg = mean(pct_black, na.rm=TRUE),
+               degree_avg = mean(pct_4yd, na.rm=TRUE),
+               pov_avg = mean(below_pov, na.rm=TRUE),
+               gini_diff = gini_avg - mean(gini_top, na.rm=TRUE),
+               medinc_diff = medinc_avg - mean(medinc_top, na.rm=TRUE),
+               white_diff = white_avg - mean(pct_white_top, na.rm=TRUE),
+               black_diff = black_avg - mean(pct_black_top, na.rm=TRUE),
+               degree_diff = degree_avg - mean(pct_4yd_top, na.rm=TRUE),
+               pov_diff = pov_avg - mean(below_pov_top, na.rm=TRUE),
+               cph = cigarettes/bin_dur)
+```
+
+## Preparing Data for Analysis
+
+For census data, I compute a weighted average of each index based on the proportion of time points spent in each tract. 
+
+After creating a reduced dataframe with one line per COVERAGE bin, these resulting weighted averages for each COVERAGE bin would then be standardized across all participants and bins into z-scores.
+
+Analyses by time bins specific to each EMA item (_ibin) are reported in other scripts:
+Craving_Analysis_31.8.20.Rmd
+Feeling_Analysis_31.8.20.Rmd
+LastCig_Analysis_26.8.20.Rmd
+NumCig_Analysis_23.8.20.Rmd
+
+```{r}
+#Correcting anomalous responses: These really need to be corrected in the merging script
+data <- cleanData_join_all
+data$feelscore_rbin[data$feelscore_rbin==91] <- NA #original response entered as: "Feel#91"
+data$feelscore_cbin[data$feelscore_cbin==50] <- 9
+data$feelscore_rbin[data$feelscore_rbin==72] <- 7 #original response entered as: "Feel 7smoke 2"
+data$feelscore_rbin[data$feelscore_rbin==76] <- 7 #original response entered as: "Feel 7smoke 6"
+data$feelscore_cbin[data$feelscore_cbin==72] <- 7 #original response entered as: "Feel 7smoke 2"
+data$feelscore_cbin[data$feelscore_cbin==41.5] <- 7 #not sure where this number came from, but rbins suggest a score of 7
+data$cravescore_cbin[data$cravescore_cbin==10] <- 9 #correcting an impossible rating that came from Merge_AllEMA_Location.Rmd
+
+# identifying time bins and merging with main data: this dataframe averages across random items within coverage bin
+# it is possible to analyze the data by random bin (1 row per random bin), but currently there appears to be a bug in the AllEMA_Analysis_15.10.20.Rmd script that caused issues with assigning rbin data for the first few minutes of a coverage bin...
+covbindata <- data %>%
+  as.data.frame() %>%
+  group_by(filename) %>%
+  #this mutate function could be altered to get info about the top 3 locations vs. top location
+  mutate(gini_top = getmode(gini_est),
+         medinc_top = getmode(medinc_est),
+         pct_white_top = getmode(pct_white),
+         pct_black_top = getmode(pct_black),
+         pct_4yd_top = getmode(pct_4yd),
+         below_pov_top = getmode(below_pov),
+         exp_uniq_top = getmode(exposures_unique),
+         exp_all_top = getmode(exposures_all)) %>%
+  group_by(filename, covbin) %>%
+  #filter(pID != "GEO021" & pID != "GEO043" & pID != "GEO048" & pID != "GEO072") %>% # participants with fewer than 20 coverage bins
+  dplyr::summarize(bin_date = unique(date)[1], # [1] because some bins may include midnight
+               bin_period = unique(covbinterval),
+               bin_dur = unique(cbin_dur),
+               study_day = unique(day),
+               day_of_week = unique(dayofweek)[1],
+               study_period = unique(Study_Period),
+               platform_ema = unique(platform_ema),
+               platform_geo = unique(platform),
+               exp_uniq = unique(exposures_unique),
+               exp_all = unique(exposures_all),
+               cigarettes = mean(numcigs_cbin, na.rm=TRUE),
+               minutes = mean(mincigs_cbin, na.rm=TRUE),
+               feeling_score = mean(feelscore_cbin, na.rm=TRUE),
+               craving_score = mean(cravescore_cbin, na.rm=TRUE),
+               # merge error: rbin doesn't always appear to have a value if the geo data fall close to the start of a coverage bin
+               feeling_obs = length(na.omit(unique(feelscore_rbin))),
+               craving_obs = length(na.omit(unique(cravescore_rbin))),
+               gini_avg = mean(gini_est, na.rm=TRUE),
+               medinc_avg = mean(medinc_est, na.rm=TRUE),
+               white_avg = mean(pct_white, na.rm=TRUE),
+               black_avg = mean(pct_black, na.rm=TRUE),
+               degree_avg = mean(pct_4yd, na.rm=TRUE),
+               pov_avg = mean(below_pov, na.rm=TRUE),
+               exp_uniq_top = mean(exp_uniq_top, na.rm=TRUE),
+               exp_all_top = mean(exp_all_top, na.rm=TRUE),
+               gini_top = mean(gini_top, na.rm=TRUE),
+               medinc_top = mean(medinc_top, na.rm=TRUE),
+               white_top = mean(pct_white_top, na.rm=TRUE),
+               black_top = mean(pct_black_top, na.rm=TRUE),
+               degree_top = mean(pct_4yd_top, na.rm=TRUE),
+               pov_top = mean(below_pov_top, na.rm=TRUE),
+               exp_uniq_diff = exp_uniq - exp_uniq_top,
+               exp_all_diff = exp_all - exp_all_top,
+               gini_diff = gini_avg - gini_top,
+               medinc_diff = medinc_avg - medinc_top,
+               white_diff = white_avg - white_top,
+               black_diff = black_avg - black_top,
+               degree_diff = degree_avg - degree_top,
+               pov_diff = pov_avg - pov_top,
+               cph = cigarettes/bin_dur)
+covbindata$exp_uniq[is.na(covbindata$exp_uniq)] <- 0
+covbindata$exp_all[is.na(covbindata$exp_all)] <- 0
+
+# Reviewing daily compliance
+datesdata <- read.csv("~/Box Sync/GeoScanning_Data_822815/Data/GeoDates.csv",stringsAsFactors=FALSE)
+datesdata <- within(datesdata, {
+  Start1 = as.Date(Start1,format='%m/%d/%Y')
+  End1 = as.Date(End1,format='%m/%d/%Y')
+  Start2 = as.Date(Start2,format='%m/%d/%Y')
+  End2 = as.Date(End2,format='%m/%d/%Y')
+  End = as.Date(End,format='%m/%d/%Y')
+})
+datesdata <- within(datesdata, {
+  Study_Period <- Start1 %--% End
+})
+datesdata$Study_Duration <- as.period(datesdata$Study_Period, unit="day") + days(1)
+datesdata$EMA_Days <- ifelse(datesdata$Study_Duration<=days(15), 14, 42)
+#The next line adjusts date totals to reflect participant dropouts and missing data.
+#KEEP BUT: GEO004/GEO10/GEO013/GEO035 had rather low compliance for baseline and/or the intervention.
+#KEEP BUT: GEO033 is missing half of the intervention EMA or mapmob data--did they lose interest?
+#GEO067 had a long EMA schedule (67 days) that doesn't quite agree with the official study period (71 days) but appears to have responded every day
+#GEO070 is missing either EMA or timeline data from the intervention
+#GEO071 is missing EMA data from the intervention (Burst data)
+#GEO073 dropped out at T2
+#GEO048 has only a few day's worth of data--appears to have dropped out at track 1.
+datesdata$EMA_Days[datesdata$pID=="GEO067"] <- 67
+datesdata$EMA_Days[datesdata$pID=="GEO073"|datesdata$pID=="GEO071"|datesdata$pID=="GEO070"] <- 14
+datesdata <- subset(datesdata, select=c(pID, Study_Period, EMA_Days))
+
+#Checking compliance
+compliance_daily <- covbindata %>%
+  group_by(filename, bin_date) %>%
+  dplyr::summarize(resp_rate = length(bin_date)/3,
+            study_period = unique(study_period))
+compliance_daily <- merge(compliance_daily, datesdata, by.x = "filename", by.y = "pID", all.x = TRUE)
+compliance_overall <- compliance_daily %>%
+  group_by(filename) %>%
+  dplyr::summarize(compliance = sum(resp_rate)/unique(EMA_Days),
+            study_days = unique(EMA_Days))
+compliance_overall$outlier <- ifelse(compliance_overall$compliance < (mean(compliance_overall$compliance - 3*sd(compliance_overall$compliance))), "exclude", "keep")
+compliance_overall #suggests no outliers, but consider using more stringent thresholds?
+
+#Checking distribution of exposure rates by bin
+summary(covbindata$exp_uniq)
+summary(covbindata$exp_all)
+hist(covbindata$exp_uniq, breaks=128, xlim=c(0,32),
+     main="Distribution of retailer exposure rates by bin across participants",
+     xlab="Exposure rates per hour (unique locations)")
+hist(covbindata$exp_all, breaks=128, xlim=c(0,32),
+     main="Distribution of retailer exposure rates by bin across participants",
+     xlab="Exposure rates per hour (all licenses)")
+
+#Checking distribution of cigarettes smoked per hour
+summary(covbindata$cph)
+hist(covbindata$cph, breaks=100, xlim=c(0,25), 
+     main="Distribution of cigarettes smoked per hour",
+     xlab="Cigarettes smoked per hour")
+cutoff <- mean(covbindata$cph, na.rm=TRUE)+3.5*sd(covbindata$cph, na.rm = TRUE)
+outliers_cigs <- na.omit(covbindata$cph[covbindata$cph>cutoff])
+covbindata$cph[covbindata$cph>cutoff] <- cutoff #winsorize at 3sd above the group's mean
+
+#Checking distribution of minutes since last cigarette
+summary(covbindata$minutes)
+covbindata$minutes[covbindata$minutes<0] <- NA #remove late synced responses
+summary(covbindata$minutes)
+hist(covbindata$minutes, breaks=600, xlim=c(0,300), 
+     main="Distribution of minutes since last cigarette",
+     xlab="Minutes")
+cutoff <- mean(covbindata$minutes, na.rm=TRUE)+3.5*sd(covbindata$minutes, na.rm = TRUE)
+outliers_mins <- na.omit(covbindata$minutes[covbindata$minutes>cutoff])
+covbindata$minutes[covbindata$minutes>cutoff] <- cutoff #winsorize at 3sd above the group's mean
+
+#Scale and winsorize
+covbindata$z.exp_uniq <- scale(covbindata$exp_uniq)
+covbindata$z.exp_all <- scale(covbindata$exp_all)
+covbindata$z.cph <- scale(covbindata$cph)
+covbindata$z.mins <- scale(covbindata$minutes)
+covbindata$z.feel <- scale(covbindata$feeling_score)
+covbindata$z.crave <- scale(covbindata$craving_score)
+covbindata$z.gini = scale(covbindata$gini_avg)
+covbindata$z.medinc = scale(covbindata$medinc_avg)
+covbindata$z.black = scale(covbindata$black_avg)
+covbindata$z.white = scale(covbindata$white_avg)
+covbindata$z.degree = scale(covbindata$degree_avg)
+covbindata$z.pov = scale(covbindata$pov_avg)
+covbindata$zt.exp_uniq <- scale(covbindata$exp_uniq_top)
+covbindata$zt.exp_all <- scale(covbindata$exp_all_top)
+covbindata$zt.gini = scale(covbindata$gini_top)
+covbindata$zt.medinc = scale(covbindata$medinc_top)
+covbindata$zt.black = scale(covbindata$black_top)
+covbindata$zt.white = scale(covbindata$white_top)
+covbindata$zt.degree = scale(covbindata$degree_top)
+covbindata$zt.pov = scale(covbindata$pov_top)
+covbindata$zd.exp_uniq <- scale(covbindata$exp_uniq_diff)
+covbindata$zd.exp_all <- scale(covbindata$exp_all_diff)
+covbindata$zd.gini = scale(covbindata$gini_diff)
+covbindata$zd.medinc = scale(covbindata$medinc_diff)
+covbindata$zd.black = scale(covbindata$black_diff)
+covbindata$zd.white = scale(covbindata$white_diff)
+covbindata$zd.degree = scale(covbindata$degree_diff)
+covbindata$zd.pov = scale(covbindata$pov_diff)
+covbindata$z.exp_uniq[covbindata$z.exp_uniq > 3.5] <- 3.5
+covbindata$z.exp_uniq[covbindata$z.exp_uniq < -3.5] <- -3.5
+covbindata$z.exp_all[covbindata$z.exp_all > 3.5] <- 3.5
+covbindata$z.exp_all[covbindata$z.exp_all < -3.5] <- -3.5
+covbindata$z.gini[covbindata$z.gini > 3.5] <- 3.5
+covbindata$z.gini[covbindata$z.gini < -3.5] <- -3.5
+covbindata$z.medinc[covbindata$z.medinc > 3.5] <- 3.5
+covbindata$z.medinc[covbindata$z.medinc < -3.5] <- -3.5
+covbindata$z.black[covbindata$z.black > 3.5] <- 3.5
+covbindata$z.black[covbindata$z.black < -3.5] <- -3.5
+covbindata$z.white[covbindata$z.white > 3.5] <- 3.5
+covbindata$z.white[covbindata$z.white < -3.5] <- -3.5
+covbindata$z.degree[covbindata$z.degree > 3.5] <- 3.5
+covbindata$z.degree[covbindata$z.degree < -3.5] <- -3.5
+covbindata$z.pov[covbindata$z.pov > 3.5] <- 3.5
+covbindata$z.pov[covbindata$z.pov < -3.5] <- -3.5
+covbindata$zt.exp_uniq[covbindata$zt.exp_uniq > 3.5] <- 3.5
+covbindata$zt.exp_uniq[covbindata$zt.exp_uniq < -3.5] <- -3.5
+covbindata$zt.exp_all[covbindata$zt.exp_all > 3.5] <- 3.5
+covbindata$zt.exp_all[covbindata$zt.exp_all < -3.5] <- -3.5
+covbindata$zt.gini[covbindata$zt.gini > 3.5] <- 3.5
+covbindata$zt.gini[covbindata$zt.gini < -3.5] <- -3.5
+covbindata$zt.medinc[covbindata$zt.medinc > 3.5] <- 3.5
+covbindata$zt.medinc[covbindata$zt.medinc < -3.5] <- -3.5
+covbindata$zt.black[covbindata$zt.black > 3.5] <- 3.5
+covbindata$zt.black[covbindata$zt.black < -3.5] <- -3.5
+covbindata$zt.white[covbindata$zt.white > 3.5] <- 3.5
+covbindata$zt.white[covbindata$zt.white < -3.5] <- -3.5
+covbindata$zt.degree[covbindata$zt.degree > 3.5] <- 3.5
+covbindata$zt.degree[covbindata$zt.degree < -3.5] <- -3.5
+covbindata$zt.pov[covbindata$zt.pov > 3.5] <- 3.5
+covbindata$zt.pov[covbindata$zt.pov < -3.5] <- -3.5
+covbindata$zd.exp_uniq[covbindata$zd.exp_uniq > 3.5] <- 3.5
+covbindata$zd.exp_uniq[covbindata$zd.exp_uniq < -3.5] <- -3.5
+covbindata$zd.exp_all[covbindata$zd.exp_all > 3.5] <- 3.5
+covbindata$zd.exp_all[covbindata$zd.exp_all < -3.5] <- -3.5
+covbindata$zd.gini[covbindata$zd.gini > 3.5] <- 3.5
+covbindata$zd.gini[covbindata$zd.gini < -3.5] <- -3.5
+covbindata$zd.medinc[covbindata$zd.medinc > 3.5] <- 3.5
+covbindata$zd.medinc[covbindata$zd.medinc < -3.5] <- -3.5
+covbindata$zd.black[covbindata$zd.black > 3.5] <- 3.5
+covbindata$zd.black[covbindata$zd.black < -3.5] <- -3.5
+covbindata$zd.white[covbindata$zd.white > 3.5] <- 3.5
+covbindata$zd.white[covbindata$zd.white < -3.5] <- -3.5
+covbindata$zd.degree[covbindata$zd.degree > 3.5] <- 3.5
+covbindata$zd.degree[covbindata$zd.degree < -3.5] <- -3.5
+covbindata$zd.pov[covbindata$zd.pov > 3.5] <- 3.5
+covbindata$zd.pov[covbindata$zd.pov < -3.5] <- -3.5
+message("Summary of scaled exposure data (unique locations)")
+summary(covbindata$z.exp_uniq)
+message("Summary of scaled exposure data (all licenses)")
+summary(covbindata$z.exp_all)
+message("Summary of scaled gini data")
+summary(covbindata$z.gini)
+message("Summary of scaled median income data")
+summary(covbindata$z.medinc)
+message("Summary of scaled % Black population")
+summary(covbindata$z.black) 
+message("Summary of scaled % White population")
+summary(covbindata$z.white) 
+message("Summary of scaled % degree holders")
+summary(covbindata$z.degree) 
+message("Summary of scaled % below poverty")
+summary(covbindata$z.pov) 
+message("Summary of modal exposure data (unique locations)")
+summary(covbindata$zt.exp_uniq)
+message("Summary of modal exposure data (all licenses)")
+summary(covbindata$zt.exp_all)
+message("Summary of scaled modal gini")
+summary(covbindata$zt.gini)
+message("Summary of scaled modal median income")
+summary(covbindata$zt.medinc)
+message("Summary of scaled modal % Black population")
+summary(covbindata$zt.black) 
+message("Summary of scaled modal % White population")
+summary(covbindata$zt.white) 
+message("Summary of scaled modal % degree holders")
+summary(covbindata$zt.degree) 
+message("Summary of scaled modal % below poverty")
+summary(covbindata$zt.pov) 
+message("Summary of scaled exposure difference (unique locations)")
+summary(covbindata$zd.exp_uniq)
+message("Summary of scaled exposure difference (all licenses)")
+summary(covbindata$zd.exp_all)
+message("Summary of scaled gini difference")
+summary(covbindata$zd.gini)
+message("Summary of scaled median income difference")
+summary(covbindata$zd.medinc)
+message("Summary of scaled difference in % Black population")
+summary(covbindata$zd.black) 
+message("Summary of scaled difference in % White population")
+summary(covbindata$zd.white) 
+message("Summary of scaled difference in % degree holders")
+summary(covbindata$zd.degree) 
+message("Summary of scaled difference in % below poverty")
+summary(covbindata$zd.pov) 
+table(covbindata$pID)
+head(covbindata)
+```
+
+Here, I repeat a similar process for the participant's demographics data. There are several individual differences I decided not to explore due to low variability in the sample (e.g., everyone smokes in their own homes).
+```{r}
+demodata <- read.csv("/Users/brad/Box Sync/GeoScanning_Data_822815/Data/demographics.csv", stringsAsFactors = FALSE)
+demodata$WorkTime = NA
+for (r in 1:nrow(demodata)) {
+  if(grepl("n/a|dont|na",demodata$Weekday_Start[r])) {
+    demodata$Weekday_Start[r]=NA
+    demodata$Weekday_Stop[r]=NA
+    next
+  }
+  Day_Start = parse_date_time(demodata$Weekday_Start[r], 'IMS p')
+  Day_Stop = parse_date_time(demodata$Weekday_Stop[r], 'IMS p')
+  demodata$WorkTime[r] = as.numeric(Day_Stop - Day_Start)
+}
+
+demodata_recoded <- demodata %>% 
+  mutate(edu_mother=dplyr::recode(edu_mother, 
+                           `Less than high school` = 1,
+                           `High school graduate (or equivalent)` = 2,
+                           `Some college (1-4 years, no degree)` = 3,
+                           `Associate's degree (including occupational or academic degrees)` = 4,
+                           `Bachelor's degree (BA, BS, etc)` = 5,
+                           `Master's degree (MA, MS, MENG, MSW, etc)` = 6,
+                           `Professional school degree (MD, DDC, JD, etc)` = 7,
+                           `Doctorate degree (PhD, EdD, etc)` = 7), # all advanced degrees coded as 7
+         edu_father=dplyr::recode(edu_father,
+                           `Less than high school` = 1,
+                           `High school graduate (or equivalent)` = 2,
+                           `Some college (1-4 years, no degree)` = 3,
+                           `Associate's degree (including occupational or academic degrees)` = 4,
+                           `Bachelor's degree (BA, BS, etc)` = 5,
+                           `Master's degree (MA, MS, MENG, MSW, etc)` = 6,
+                           `Professional school degree (MD, DDC, JD, etc)` = 7,
+                           `Doctorate degree (PhD, EdD, etc)` = 7),
+         edu_self=dplyr::recode(edu_self,
+                           `Less than high school` = 1,
+                           `High school graduate (or equivalent)` = 2,
+                           `Some college (1-4 years, no degree)` = 3,
+                           `Associate's degree (including occupational or academic degrees)` = 4,
+                           `Bachelor's degree (BA, BS, etc)` = 5,
+                           `Master's degree (MA, MS, MENG, MSW, etc)` = 6,
+                           `Professional school degree (MD, DDC, JD, etc)` = 7,
+                           `Doctorate degree (PhD, EdD, etc)` = 7),
+         cope1=dplyr::recode(cope1,
+                      Never = 1,
+                      Rarely = 2,
+                      Sometimes = 3,
+                      Often = 4,
+                      Always = 5),
+         cope2=dplyr::recode(cope2,
+                      Never = 1,
+                      Rarely = 2,
+                      Sometimes = 3,
+                      Often = 4,
+                      Always = 5),
+         cope3=dplyr::recode(cope3,
+                      `Not at all` = 1,
+                      `A little bit` = 2,
+                      `Somewhat` = 3,
+                      `Quite a bit` = 4,
+                      `Very much` = 5),
+         cope4=dplyr::recode(cope4,
+                      `Not at all` = 1,
+                      `A little bit` = 2,
+                      `Somewhat` = 3,
+                      `Quite a bit` = 4,
+                      `Very much` = 5),
+         Gender.all=dplyr::recode(Gender,
+                           Male = -.5,
+                           Female = .5,
+                           Other = .5), # for this variable, I include other as non-dominant and group with women
+         Gender=dplyr::recode(Gender,
+                       Male = -.5,
+                       Female = .5), # there is one "Other", which is coded as NA here
+         Minority=dplyr::recode(Race,
+                         `White` = -.5,
+                         `Black or African American` = .5,
+                         `Asian` = .5,
+                         `American Indian or Alaska Native` = .5,
+                         `Native Hawaiian or Other Pacific Islander` = .5,
+                         `Other` = .5),
+         Commuter=dplyr::recode(Commuter,
+                         Yes = .5,
+                         No = -.5),
+         #Added variables looking at a few work- and smoking-related variables with decent distributions
+         WorkAway=dplyr::recode(JobStatusT1,
+                         `Don't work` = -.5,
+                         `No` = -.5,
+                         `Yes` = .5),
+         HomeSmoke_Other=dplyr::recode(homesmoke_other,
+                                `Daily`=.5,
+                                `Less than monthly`=-5,
+                                `Never`=-.5,
+                                `Weekly`=-.5)
+         )
+demodata_recoded$edu_parents = rowMeans(demodata_recoded[,c(which(colnames(demodata_recoded)=="edu_mother"),
+                                                            which(colnames(demodata_recoded)=="edu_father"))], na.rm=TRUE)
+demodata_recoded$coping = rowMeans(demodata_recoded[,c(which(colnames(demodata_recoded)=="cope1"),
+                                                       which(colnames(demodata_recoded)=="cope2"),
+                                                       which(colnames(demodata_recoded)=="cope3"),
+                                                       which(colnames(demodata_recoded)=="cope4"))], na.rm=TRUE)
+demodata_recoded$inc_hh_open <- gsub("[^0-9]", "", str_replace(demodata_recoded$inc_hh_open, "[.]00", ""))
+
+# Get ZIP code data from the 2017 ACS
+PA_NJ_DE_ZIP <- 
+    get_acs(geography = "zip code tabulation area",
+            variables = myACS_Vars, 
+            year = 2017, 
+            #state = c("PA", "NJ", "DE"), # have to request ZIP data nationwide
+            geometry = TRUE,
+            output = "wide") %>%
+  rename(gini_est =  B19083_001E,
+         gini_err = B19083_001M,
+         medinc_est = B19013_001E,
+         medinc_err = B19013_001M,
+         pop_est = B01003_001E, 
+         pop_err = B01003_001M, 
+         popb_est = B02001_003E, 
+         popb_err = B02001_003M,
+         popw_est = B02001_002E, 
+         popw_err = B02001_002M, 
+         povtot_est = B17026_001E,
+         povtot_err = B17026_001M,
+         pov1_est = B17026_002E,
+         pov1_err = B17026_002M,
+         pov2_est = B17026_003E,
+         pov2_err = B17026_003M,
+         pov3_est = B17026_004E,
+         pov3_err = B17026_004M,
+         edutot_est = B15003_001E,
+         edutot_err = B15003_001M,
+         edu4year_est = B15003_022E,
+         edu4year_err = B15003_022M) %>%
+  mutate(pct_black = popb_est/pop_est,
+         pct_white = popw_est/pop_est,
+         below_pov = (pov1_est+pov2_est+pov3_est)/povtot_est,
+         pct_4yd = edu4year_est/edutot_est) %>%
+  #st_transform(crs = 4326) %>%
+  dplyr::select(GEOID,gini_est,medinc_est,pct_black,pct_white,below_pov,pct_4yd) %>%
+  mutate(GEOID = gsub("NA", "", GEOID))
+
+# Prepare ZIP codes in demodata_recoded and merge
+demodata_recoded$ZIP_childhood <- as.character(demodata_recoded$ZIP_childhood)
+demodata_recoded$ZIP_current <- as.character(demodata_recoded$ZIP_current)
+demodata_recoded$ZIP_childhood[is.na(demodata_recoded$ZIP_childhood)] <- ""
+demodata_recoded$ZIP_current[is.na(demodata_recoded$ZIP_current)] <- ""
+for (r in 1:nrow(demodata_recoded)) {
+  if (nchar(demodata_recoded$ZIP_childhood[r])<5) {
+    demodata_recoded$ZIP_childhood[r] <- paste("0", demodata_recoded$ZIP_childhood[r], sep="") 
+  }
+  if (nchar(demodata_recoded$ZIP_current[r])<5) {
+    demodata_recoded$ZIP_current[r] <- paste("0", demodata_recoded$ZIP_current[r], sep="") 
+  }
+}
+demodata_recoded <- merge(demodata_recoded, PA_NJ_DE_ZIP, by.x="ZIP_childhood", by.y = "GEOID", all.x = TRUE)
+demodata_recoded <- demodata_recoded %>% rename(gini_est_childhood = gini_est,
+                                                medinc_est_childhood = medinc_est,
+                                                black_est_childhood = pct_black,
+                                                white_est_childhood = pct_white,
+                                                degree_est_childhood = pct_4yd,
+                                                pov_est_childhood = below_pov)
+demodata_recoded <- merge(demodata_recoded, PA_NJ_DE_ZIP, by.x="ZIP_current", by.y = "GEOID", all.x = TRUE)
+demodata_recoded <- demodata_recoded %>% rename(gini_est_current = gini_est,
+                                                medinc_est_current = medinc_est,
+                                                black_est_current = pct_black,
+                                                white_est_current = pct_white,
+                                                degree_est_current = pct_4yd,
+                                                pov_est_current = below_pov)
+
+#Scale and winsorize
+demodata_recoded$z.coping = scale(demodata_recoded$coping)
+demodata_recoded$z.ladder = scale(demodata_recoded$ladder)
+demodata_recoded$z.edu_parents = scale(demodata_recoded$edu_parents)
+demodata_recoded$z.edu_self = scale(demodata_recoded$edu_self)
+#demodata_recoded$z.inc_hh_open = scale(as.numeric(demodata_recoded$inc_hh_open)) #not much data, and we have weird values
+demodata_recoded$z.age = scale(demodata_recoded$Age)
+demodata_recoded$z.gini_est_childhood = scale(demodata_recoded$gini_est_childhood)
+demodata_recoded$z.gini_est_current = scale(demodata_recoded$gini_est_current)
+demodata_recoded$z.medinc_est_childhood = scale(demodata_recoded$medinc_est_childhood)
+demodata_recoded$z.medinc_est_current = scale(demodata_recoded$medinc_est_current)
+demodata_recoded$z.black_est_childhood = scale(demodata_recoded$black_est_childhood)
+demodata_recoded$z.black_est_current = scale(demodata_recoded$black_est_current)
+demodata_recoded$z.white_est_childhood = scale(demodata_recoded$white_est_childhood)
+demodata_recoded$z.white_est_current = scale(demodata_recoded$white_est_current)
+demodata_recoded$z.degree_est_childhood = scale(demodata_recoded$degree_est_childhood)
+demodata_recoded$z.degree_est_current = scale(demodata_recoded$degree_est_current)
+demodata_recoded$z.pov_est_childhood = scale(demodata_recoded$pov_est_childhood)
+demodata_recoded$z.pov_est_current = scale(demodata_recoded$pov_est_current)
+demodata_recoded$z.worktime = scale(demodata$WorkTime)
+
+demodata_recoded$z.coping[demodata_recoded$z.coping > 3.5] = 3.5
+demodata_recoded$z.coping[demodata_recoded$z.coping < -3.5] = -3.5
+demodata_recoded$z.ladder[demodata_recoded$z.ladder > 3.5] = 3.5
+demodata_recoded$z.ladder[demodata_recoded$z.ladder < -3.5] = -3.5
+demodata_recoded$z.edu_parents[demodata_recoded$z.edu_parents > 3.5] = 3.5
+demodata_recoded$z.edu_parents[demodata_recoded$z.edu_parents < -3.5] = -3.5
+demodata_recoded$z.edu_self[demodata_recoded$z.edu_self > 3.5] = 3.5
+demodata_recoded$z.edu_self[demodata_recoded$z.edu_self < -3.5] = -3.5
+demodata_recoded$z.age[demodata_recoded$z.age > 3.5] = 3.5
+demodata_recoded$z.age[demodata_recoded$z.age < -3.5] = -3.5
+demodata_recoded$z.gini_est_childhood[demodata_recoded$z.gini_est_childhood > 3.5] = 3.5
+demodata_recoded$z.gini_est_childhood[demodata_recoded$z.gini_est_childhood < -3.5] = -3.5
+demodata_recoded$z.gini_est_current[demodata_recoded$z.gini_est_current > 3.5] = 3.5
+demodata_recoded$z.gini_est_current[demodata_recoded$z.gini_est_current < -3.5] = -3.5
+demodata_recoded$z.medinc_est_childhood[demodata_recoded$z.medinc_est_childhood > 3.5] = 3.5
+demodata_recoded$z.medinc_est_childhood[demodata_recoded$z.medinc_est_childhood < -3.5] = -3.5
+demodata_recoded$z.medinc_est_current[demodata_recoded$z.medinc_est_current > 3.5] = 3.5
+demodata_recoded$z.medinc_est_current[demodata_recoded$z.medinc_est_current < -3.5] = -3.5
+demodata_recoded$z.worktime[demodata_recoded$z.worktime > 3.5] = 3.5
+demodata_recoded$z.worktime[demodata_recoded$z.worktime < -3.5] = -3.5
+demodata_recoded$z.black_est_childhood[demodata_recoded$z.black_est_childhood > 3.5] = 3.5
+demodata_recoded$z.black_est_childhood[demodata_recoded$z.black_est_childhood < -3.5] = -3.5
+demodata_recoded$z.black_est_current[demodata_recoded$z.black_est_current > 3.5] = 3.5
+demodata_recoded$z.black_est_current[demodata_recoded$z.black_est_current < -3.5] = -3.5
+demodata_recoded$z.white_est_childhood[demodata_recoded$z.white_est_childhood > 3.5] = 3.5
+demodata_recoded$z.white_est_childhood[demodata_recoded$z.white_est_childhood < -3.5] = -3.5
+demodata_recoded$z.white_est_current[demodata_recoded$z.white_est_current > 3.5] = 3.5
+demodata_recoded$z.white_est_current[demodata_recoded$z.white_est_current < -3.5] = -3.5
+demodata_recoded$z.degree_est_childhood[demodata_recoded$z.degree_est_childhood > 3.5] = 3.5
+demodata_recoded$z.degree_est_childhood[demodata_recoded$z.degree_est_childhood < -3.5] = -3.5
+demodata_recoded$z.degree_est_current[demodata_recoded$z.degree_est_current > 3.5] = 3.5
+demodata_recoded$z.degree_est_current[demodata_recoded$z.degree_est_current < -3.5] = -3.5
+demodata_recoded$z.pov_est_childhood[demodata_recoded$z.pov_est_childhood > 3.5] = 3.5
+demodata_recoded$z.pov_est_childhood[demodata_recoded$z.pov_est_childhood < -3.5] = -3.5
+demodata_recoded$z.pov_est_current[demodata_recoded$z.pov_est_current > 3.5] = 3.5
+demodata_recoded$z.pov_est_current[demodata_recoded$z.pov_est_current < -3.5] = -3.5
+
+#Select and merge with main dataframe
+demomerge <- demodata_recoded %>% dplyr::select(pID, z.ladder, z.coping, z.edu_parents, z.edu_self, z.age, z.gini_est_childhood, z.gini_est_current, z.medinc_est_childhood, z.medinc_est_current, z.worktime, Gender, Gender.all, Minority, Commuter, WorkAway, HomeSmoke_Other, z.black_est_current, z.black_est_childhood, z.white_est_current, z.white_est_childhood, z.degree_est_current, z.degree_est_childhood, z.pov_est_childhood, z.pov_est_current)
+covbindata <- merge(covbindata, demomerge, by.x = "filename", by.y = "pID", all.x = TRUE)
+head(covbindata)
+```
+
+## Analysis
+
+Loading R workspace for analysis: This takes some time.
+
+Look up Gina South biostatistician with interests in equity and public health, faculty director of the urban health lab in emergency medicine.
+
+```{r}
+# Older workspaces
+#load("/Volumes/cnlab/GeoScan/Pilot_Analyses/Workspaces/Analyses/CensusAnalyses_15.10.20.RData")
+#load("/Volumes/cnlab/GeoScan/Pilot_Analyses/Workspaces/Analyses/ExposureAnalyses_1.11.20.RData")
+#load("/Volumes/cnlab/GeoScan/Pilot_Analyses/Workspaces/Analyses/AllAnalyses_1.1.21.RData")
+
+# Workspaces with updated functions and more defined retailer buffers
+#load("/Volumes/cnlab/GeoScan/Pilot_Analyses/Workspaces/Analyses/AllAnalyses_25ft_1.1.21.RData")
+#load("/Volumes/cnlab/GeoScan/Pilot_Analyses/Workspaces/Analyses/AllAnalyses_100ft_1.1.21.RData")
+
+# Workspaces with updated functions and updated retailer exposure parameters (at different buffer radii)
+#load("/Volumes/cnlab/GeoScan/Pilot_Analyses/Workspaces/Analyses/AllAnalyses_100ft_1.19.21.RData")
+#load("/Volumes/cnlab/GeoScan/Pilot_Analyses/Workspaces/Analyses/AllAnalyses_25ft_1.19.21.RData")
+load("/Volumes/cnlab/GeoScan/Pilot_Analyses/Workspaces/Analyses/AllAnalyses_100ft_2.11.21.RData") # improved retailer exposure calculation, corrected 2018 bug, dropped last two weeks of GEO053
+```
+
+## Analyses for K01
+
+Restructuring the data
+```{r}
+# Compute between-subjects and within-subjects predictors
+betweendata <- covbindata %>% rename(pID = filename) %>%
+  group_by(., pID) %>%
+  dplyr::summarize(pov_btw = mean(pov_avg, na.rm=TRUE),
+                   crav_btw = mean(craving_score, na.rm=TRUE),
+                   feel_btw = mean(feeling_score, na.rm=TRUE),
+                   exp_btw = mean(exp_uniq, na.rm=TRUE),
+                   cph_btw = mean(cph, na.rm=TRUE),
+                   z.ladder = mean(z.ladder, na.rm=TRUE),
+                   z.coping = mean(z.coping, na.rm=TRUE),
+                   z.age = mean(z.age, na.rm=TRUE),
+                   z.edu_parents = mean(z.edu_parents, na.rm=TRUE),
+                   z.edu_self = mean(z.edu_self, na.rm=TRUE),
+                   gender = mean(Gender, na.rm=TRUE)) %>%
+  mutate(z.pov_btw = scale(pov_btw),
+         z.crav_btw = scale(crav_btw),
+         z.feel_btw = scale(feel_btw),
+         z.exp_btw = scale(exp_btw),
+         z.cph_btw = scale(cph_btw))
+kdata <- covbindata %>% rename(pID = filename) %>%
+  group_by(., pID) %>%
+  mutate(z.pov_wi = scale(pov_avg),
+         z.crav_wi = scale(craving_score),
+         z.feel_wi = scale(feeling_score),
+         z.exp_wi = scale(exp_uniq),
+         z.cph_wi = scale(cph)) %>%
+  mutate_at("z.pov_wi", funs(if(sd(pov_avg,na.rm=TRUE)==0) {0} else {.})) %>%
+  mutate_at("z.crav_wi", funs(if(sd(craving_score,na.rm=TRUE)==0) {0} else {.})) %>%
+  mutate_at("z.feel_wi", funs(if(sd(feeling_score,na.rm=TRUE)==0) {0} else {.})) %>%
+  mutate_at("z.exp_wi", funs(if(sd(exp_uniq,na.rm=TRUE)==0) {0} else {.})) %>%
+  mutate_at("z.cph_wi", funs(if(sd(cph,na.rm=TRUE)==0) {0} else {.}))
+kdata <- merge(kdata, betweendata, all.x = TRUE, by = "pID")
+```
+
+# Results for data created using 100-ft buffer
+
+Looking at correlations between predictors.
+```{r}
+library("corrplot")
+# Function for computing p value matrices
+cor.mtest <- function(mat, ...) {
+    mat <- as.matrix(mat)
+    n <- ncol(mat)
+    p.mat<- matrix(NA, n, n)
+    diag(p.mat) <- 0
+    for (i in 1:(n - 1)) {
+        for (j in (i + 1):n) {
+            tmp <- cor.test(mat[, i], mat[, j], ...)
+            p.mat[i, j] <- p.mat[j, i] <- tmp$p.value
+        }
+    }
+  colnames(p.mat) <- rownames(p.mat) <- colnames(mat)
+  p.mat
+}
+# Plotting correlations
+corrdata_btw <- betweendata %>% dplyr::select(z.cph_btw,
+                                              z.pov_btw,
+                                              z.crav_btw,
+                                              z.feel_btw,
+                                              z.exp_btw,
+                                              z.ladder,
+                                              z.coping,
+                                              z.age,
+                                              z.edu_parents,
+                                              z.edu_self,
+                                              gender)
+p.mat <- cor.mtest(corrdata_btw, use = "pairwise.complete.obs")
+c.mat <- cor(corrdata_btw, use = "pairwise.complete.obs")
+corrplot(c.mat, method="color",  
+         type="upper", 
+         addCoef.col = "black", # Add coefficient of correlation
+         tl.col="black", tl.srt=45, #Text label color and rotation
+         # Combine with significance
+         p.mat = p.mat, sig.level = 0.05, insig = "blank",
+         # Remove diagonal
+         diag = FALSE)
+p.mat
+corrdata_wi <- kdata %>% dplyr::select(z.pov_wi,
+                                       z.crav_wi,
+                                       z.feel_wi,
+                                       z.exp_wi,
+                                       z.cph_wi)
+p.mat <- cor.mtest(corrdata_wi, use = "pairwise.complete.obs")
+c.mat <- cor(corrdata_wi, use = "pairwise.complete.obs")
+corrplot(c.mat, method="color",  
+         type="upper", 
+         addCoef.col = "black", # Add coefficient of correlation
+         tl.col="black", tl.srt=45, #Text label color and rotation
+         # Combine with significance
+         p.mat = p.mat, sig.level = 0.05, insig = "blank",
+         # Remove diagonal
+         diag = FALSE)
+p.mat
+```
+
+Modeling Relations between Predictors
+They appear to be orthogonal--possibly even related in the opposite direction to what you'd expect at the within-person level. Some possible within-between interactions may emerge with 100-ft retailer buffers.
+
+```{r}
+library("lmerTest")
+expov1 <- lmer(pov_avg ~ z.exp_wi*z.exp_btw*z.pov_btw + (0+z.exp_wi|pID), data=kdata)
+summary(expov1)
+
+expov2 <- lmer(exp_uniq ~ z.pov_wi*z.exp_btw*z.pov_btw + (0+z.pov_wi|pID), data=kdata)
+summary(expov2)
+
+#povstress.0 <- lmer(feeling_score ~ z.pov_wi*z.exp_wi + z.pov_btw*z.exp_btw + (1+z.pov_wi*z.exp_wi|pID), data=kdata)
+#povstress.1 <- lmer(feeling_score ~ z.pov_wi*z.exp_wi + z.pov_btw*z.exp_btw + (1+z.pov_wi*z.exp_wi||pID), data=kdata)
+#povstress.2 <- lmer(feeling_score ~ z.pov_wi*z.exp_wi + z.pov_btw*z.exp_btw + (1+z.pov_wi+z.exp_wi||pID), data=kdata)
+povstress.3 <- lmer(feeling_score ~ z.pov_wi*z.exp_wi + z.pov_btw*z.exp_btw + (1+z.pov_wi||pID), data=kdata)
+#povstress.4 <- lmer(feeling_score ~ z.pov_wi*z.exp_wi + z.pov_btw*z.exp_btw + (1+z.pov_wi|pID), data=kdata)
+#anova(povstress.3,povstress.4)
+summary(povstress.3)
+```
+
+Analyses with Poverty as the Moderator
+Threshold of inclusion for covariates: None--include all within and between predictors.
+
+```{r}
+library("lmerTest")
+
+#Aim 1: cravings ~ mood and poverty exposure
+#aim1.0 <- lmer(craving_score ~ z.feel_wi*z.pov_wi + z.feel_btw*z.pov_btw + z.exp_wi + z.exp_btw + (1+z.feel_wi*z.pov_wi+z.exp_wi|pID), data=kdata)
+#aim1.1 <- lmer(craving_score ~ z.feel_wi*z.pov_wi + z.feel_btw*z.pov_btw + z.exp_wi + z.exp_btw + (1+z.feel_wi*z.pov_wi+z.exp_wi||pID), data=kdata)
+#aim1.2 <- lmer(craving_score ~ z.feel_wi*z.pov_wi + z.feel_btw*z.pov_btw + z.exp_wi + z.exp_btw + (1+z.feel_wi+z.pov_wi+z.exp_wi||pID), data=kdata)
+aim1.3 <- lmer(craving_score ~ z.feel_wi*z.pov_wi + z.feel_btw*z.pov_btw + z.exp_wi + z.exp_btw + (1+z.feel_wi+z.exp_wi||pID), data=kdata)
+#aim1.4 <- lmer(craving_score ~ z.feel_wi*z.pov_wi + z.feel_btw*z.pov_btw + z.exp_wi + z.exp_btw + (1+z.feel_wi+z.exp_wi|pID), data=kdata)
+summary(aim1.3)
+
+#Controlling for cph, which does predict cravings
+
+#aim1alt.0 <- lmer(craving_score ~ z.feel_wi*z.pov_wi + z.feel_btw*z.pov_btw + z.exp_wi + z.cph_wi + z.exp_btw + z.cph_btw + (1+z.feel_wi*z.pov_wi+z.exp_wi+z.cph_wi|pID), data=kdata)
+#aim1alt.1 <- lmer(craving_score ~ z.feel_wi*z.pov_wi + z.feel_btw*z.pov_btw + z.exp_wi + z.cph_wi + z.exp_btw + z.cph_btw + (1+z.feel_wi*z.pov_wi+z.exp_wi+z.cph_wi||pID), data=kdata)
+aim1alt.2 <- lmer(craving_score ~ z.feel_wi*z.pov_wi + z.feel_btw*z.pov_btw + z.exp_wi + z.cph_wi + z.exp_btw + z.cph_btw + (1+z.feel_wi+z.pov_wi+z.exp_wi+z.cph_wi||pID), data=kdata)
+#aim1alt.3 <- lmer(craving_score ~ z.feel_wi*z.pov_wi + z.feel_btw*z.pov_btw + z.exp_wi + z.cph_wi + z.exp_btw + z.cph_btw + (1+z.feel_wi+z.pov_wi+z.exp_wi+z.cph_wi|pID), data=kdata)
+summary(aim1alt.2)
+
+#Aim 2: cph ~ mood and poverty exposure
+#aim2.0 <- lmer(cph ~ z.feel_wi*z.pov_wi + z.feel_btw*z.pov_btw + z.exp_wi + z.exp_btw + (1+z.feel_wi*z.pov_wi+z.exp_wi|pID), data=kdata, control=lmerControl(optimizer="bobyqa", optCtrl=list(maxfun=100000)))
+#aim2.1 <- lmer(cph ~ z.feel_wi*z.pov_wi + z.feel_btw*z.pov_btw + z.exp_wi + z.exp_btw + (1+z.feel_wi*z.pov_wi+z.exp_wi||pID), data=kdata, control=lmerControl(optimizer="bobyqa", optCtrl=list(maxfun=100000)))
+#aim2.2 <- lmer(cph ~ z.feel_wi*z.pov_wi + z.feel_btw*z.pov_btw + z.exp_wi + z.exp_btw + (1+z.feel_wi+z.pov_wi+z.exp_wi||pID), data=kdata, control=lmerControl(optimizer="bobyqa", optCtrl=list(maxfun=100000)))
+#aim2.3 <- lmer(cph ~ z.feel_wi*z.pov_wi + z.feel_btw*z.pov_btw + z.exp_wi + z.exp_btw + (1+z.exp_wi||pID), data=kdata, control=lmerControl(optimizer="bobyqa", optCtrl=list(maxfun=100000)))
+aim2.4 <- lmer(cph ~ z.feel_wi*z.pov_wi + z.feel_btw*z.pov_btw + z.exp_wi + z.exp_btw + (1+z.exp_wi|pID), data=kdata, control=lmerControl(optimizer="bobyqa", optCtrl=list(maxfun=100000)))
+#anova(aim2.4,aim2.3) #prefer model 4
+summary(aim2.4)
+
+#Controlling for cravings, which do predict smoking, at least at the between-person level.
+
+#aim2alt.0 <- lmer(cph ~ z.feel_wi*z.pov_wi + z.feel_btw*z.pov_btw + z.exp_wi + z.crav_wi + z.exp_btw + z.crav_btw + (1+z.feel_wi*z.pov_wi+z.exp_wi + z.crav_wi|pID), data=kdata, control=lmerControl(optimizer="bobyqa", optCtrl=list(maxfun=100000)))
+#aim2alt.1 <- lmer(cph ~ z.feel_wi*z.pov_wi + z.feel_btw*z.pov_btw + z.exp_wi + z.crav_wi + z.exp_btw + z.crav_btw + (1+z.feel_wi*z.pov_wi+z.exp_wi + z.crav_wi||pID), data=kdata, control=lmerControl(optimizer="bobyqa", optCtrl=list(maxfun=100000)))
+#aim2alt.2 <- lmer(cph ~ z.feel_wi*z.pov_wi + z.feel_btw*z.pov_btw + z.exp_wi + z.crav_wi + z.exp_btw + z.crav_btw + (1+z.feel_wi+z.pov_wi+z.exp_wi + z.crav_wi||pID), data=kdata, control=lmerControl(optimizer="bobyqa", optCtrl=list(maxfun=100000)))
+aim2alt.3 <- lmer(cph ~ z.feel_wi*z.pov_wi + z.feel_btw*z.pov_btw + z.exp_wi + z.crav_wi + z.exp_btw + z.crav_btw + (1+z.feel_wi+z.exp_wi + z.crav_wi||pID), data=kdata, control=lmerControl(optimizer="bobyqa", optCtrl=list(maxfun=100000)))
+#aim2alt.4 <- lmer(cph ~ z.feel_wi*z.pov_wi + z.feel_btw*z.pov_btw + z.exp_wi + z.crav_wi + z.exp_btw + z.crav_btw + (1+z.feel_wi+z.exp_wi + z.crav_wi|pID), data=kdata, control=lmerControl(optimizer="bobyqa", optCtrl=list(maxfun=100000)))
+summary(aim2alt.3)
+```
+
+Some old path b models - smoking frequency really appears to be driven by between-person variables--not within. This is consistent with what David has been saying about heavy smokers being more stereotyped in their smoking patterns.
+
+```{r}
+# pathb.0 <- lmer(cph ~ z.crav_wi*z.pov_wi + z.crav_btw*z.pov_btw + z.exp_wi + z.exp_btw + (1+z.crav_wi*z.pov_wi+z.exp_wi|pID), data=kdata, control=lmerControl(optimizer="bobyqa", optCtrl=list(maxfun=100000)))
+# pathb.1 <- lmer(cph ~ z.crav_wi*z.pov_wi + z.crav_btw*z.pov_btw + z.exp_wi + z.exp_btw + (1+z.crav_wi*z.pov_wi+z.exp_wi||pID), data=kdata, control=lmerControl(optimizer="bobyqa", optCtrl=list(maxfun=100000)))
+#pathb.2 <- lmer(cph ~ z.crav_wi*z.pov_wi + z.crav_btw*z.pov_btw + z.exp_wi + z.exp_btw + (1+z.crav_wi+z.pov_wi+z.exp_wi||pID), data=kdata, control=lmerControl(optimizer="bobyqa", optCtrl=list(maxfun=100000)))
+pathb.3 <- lmer(cph ~ z.crav_wi*z.pov_wi + z.crav_btw*z.pov_btw + z.exp_wi + z.exp_btw + (1+z.crav_wi+z.exp_wi||pID), data=kdata, control=lmerControl(optimizer="bobyqa", optCtrl=list(maxfun=100000)))
+#pathb.4 <- lmer(cph ~ z.crav_wi*z.pov_wi + z.crav_btw*z.pov_btw + z.exp_wi + z.exp_btw + (1+z.crav_wi+z.exp_wi|pID), data=kdata, control=lmerControl(optimizer="bobyqa", optCtrl=list(maxfun=100000)))
+summary(pathb.3)
+
+# pathbalt.0 <- lmer(cph ~ z.crav_wi*z.pov_wi + z.crav_btw*z.pov_btw + z.exp_wi + z.feel_wi + z.exp_btw + z.feel_btw + (1+z.crav_wi*z.pov_wi+z.exp_wi+z.feel_wi|pID), data=kdata, control=lmerControl(optimizer="bobyqa", optCtrl=list(maxfun=100000)))
+# pathbalt.1 <- lmer(cph ~ z.crav_wi*z.pov_wi + z.crav_btw*z.pov_btw + z.exp_wi + z.feel_wi + z.exp_btw + z.feel_btw + (1+z.crav_wi*z.pov_wi+z.exp_wi+z.feel_wi||pID), data=kdata, control=lmerControl(optimizer="bobyqa", optCtrl=list(maxfun=100000)))
+#pathbalt.2 <- lmer(cph ~ z.crav_wi*z.pov_wi + z.crav_btw*z.pov_btw + z.exp_wi + z.feel_wi + z.exp_btw + z.feel_btw + (1+z.crav_wi+z.pov_wi+z.exp_wi+z.feel_wi||pID), data=kdata, control=lmerControl(optimizer="bobyqa", optCtrl=list(maxfun=100000)))
+pathbalt.3 <- lmer(cph ~ z.crav_wi*z.pov_wi + z.crav_btw*z.pov_btw + z.exp_wi + z.feel_wi + z.exp_btw + z.feel_btw + (1+z.crav_wi+z.exp_wi+z.feel_wi||pID), data=kdata, control=lmerControl(optimizer="bobyqa", optCtrl=list(maxfun=100000)))
+#pathbalt.4 <- lmer(cph ~ z.crav_wi*z.pov_wi + z.crav_btw*z.pov_btw + z.exp_wi + z.feel_wi + z.exp_btw + z.feel_btw + (1+z.crav_wi+z.exp_wi+z.feel_wi|pID), data=kdata, control=lmerControl(optimizer="bobyqa", optCtrl=list(maxfun=100000)))
+summary(pathbalt.3)
+```
+
+# Plots for K Proposal
+
+```{r}
+library(effects)
+# Simple Slopes
+sim_slopes(aim1alt.2, pred=z.feel_wi, modx = z.pov_wi, digits=3)
+sim_slopes(aim1alt.2, pred=z.pov_wi, modx = z.feel_wi, digits=3)
+# sim_slopes(aim2alt.3, pred=z.feel_btw, modx = z.pov_btw, digits=3)
+# sim_slopes(aim2alt.3, pred=z.pov_btw, modx = z.feel_btw, digits=3)
+# sim_slopes(pathbalt.3, pred=z.crav_btw, modx = z.pov_btw, digits=3)
+# sim_slopes(pathbalt.3, pred=z.pov_btw, modx = z.crav_btw, digits=3)
+sim_slopes(pathbalt.3, pred=z.crav_wi, modx = z.pov_wi, digits=3)
+sim_slopes(pathbalt.3, pred=z.pov_wi, modx = z.crav_wi, digits=3)
+
+aim1data <- data.frame(effect("z.feel_wi:z.pov_wi", aim1alt.2, 
+                                  xlevels=(list(z.feel_wi = c(-1,1), z.pov_wi = c(-1,1)))))
+aim1data$pov <- factor(aim1data$z.pov_wi,
+                           levels = c(-1, 1),
+                           labels = c("Low Exposure (-1 SD)", "High Exposure (+1 SD)"))
+
+# aim2data <- data.frame(effect("z.feel_btw:z.pov_btw", aim2alt.3, 
+#                                   xlevels=(list(z.feel_btw = c(-1,1), z.pov_btw = c(-1,1)))))
+# aim2data$pov <- factor(aim2data$z.pov_btw,
+#                            levels = c(-1, 1),
+#                            labels = c("Low Exposure (-1 SD)", "High Exposure (+1 SD)"))
+
+# aim3adata <- data.frame(effect("z.crav_btw:z.pov_btw", pathbalt.3, 
+#                                   xlevels=(list(z.crav_btw = c(-1,1), z.pov_btw = c(-1,1)))))
+# aim3adata$pov <- factor(aim3adata$z.pov_btw,
+#                            levels = c(-1, 1),
+#                            labels = c("Low Exposure (-1 SD)", "High Exposure (+1 SD)"))
+
+aim2data <- data.frame(effect("z.crav_wi:z.pov_wi", pathbalt.3, 
+                                  xlevels=(list(z.crav_wi = c(-1,1), z.pov_wi = c(-1,1)))))
+aim2data$pov <- factor(aim2data$z.pov_wi,
+                           levels = c(-1, 1),
+                           labels = c("Low Exposure (-1 SD)", "High Exposure (+1 SD)"))
+
+povplot1 <- ggplot(data=aim1data, aes(x=z.feel_wi, y=fit, group=pov, color=pov)) + 
+  geom_line(size=2) +
+  labs(x = "Intraday Mood (Z-Scored Stress Proxy)", y = "Cigarette Cravings", colour = "Intraday Poverty Exposure") +
+  theme(axis.text = element_text(angle = 0, size=15, colour="black"), 
+        axis.title = element_text(size=15, face="bold"), 
+        legend.text=element_text(size=15), 
+        legend.title=element_text(size=15, face="bold"), 
+        legend.key = element_blank(),
+        legend.position = c(.25,.2), #puts legend in lower left corner
+        axis.line = element_line(colour = "black"), 
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(), 
+        panel.background = element_blank(), 
+        strip.text.x = element_text(size=15, face="bold")) #+
+  #ggtitle("A. Intraday poverty exposure associated with stronger cravings when people are in a bad mood (stressed)")
+povplot1
+
+# povplot2 <- ggplot(data=aim2data, aes(x=z.feel_btw, y=fit, group=pov, color=pov)) + 
+#   geom_line(size=2) +
+#   labs(x = "Average Mood (Z-Scored Stress Proxy)", y = "Cigarettes per Hour", colour = "Average Poverty Exposure") +
+#   theme(axis.text = element_text(angle = 0, size=15, colour="black"), 
+#         axis.title = element_text(size=15, face="bold"), 
+#         legend.text=element_text(size=15), 
+#         legend.title=element_text(size=15, face="bold"), 
+#         legend.key = element_blank(),
+#         legend.position = c(.25,.2), #puts legend in lower left corner
+#         axis.line = element_line(colour = "black"), 
+#         panel.grid.major = element_blank(), 
+#         panel.grid.minor = element_blank(), 
+#         panel.background = element_blank(), 
+#         strip.text.x = element_text(size=15, face="bold")) #+
+#   #ggtitle("B. Intraday poverty exposure associated with more smoking when people are in a bad mood (stressed)")
+# povplot2
+# 
+# povplot3a <- ggplot(data=aim3adata, aes(x=z.crav_btw, y=fit, group=pov, color=pov)) + 
+#   geom_line(size=2) +
+#   labs(x = "Average Cravings (Z-Scored)", y = "Cigarettes per Hour", colour = "Average Poverty Exposure") +
+#   theme(axis.text = element_text(angle = 0, size=15, colour="black"), 
+#         axis.title = element_text(size=15, face="bold"), 
+#         legend.text=element_text(size=15), 
+#         legend.title=element_text(size=15, face="bold"), 
+#         legend.key = element_blank(),
+#         legend.position = c(.25,.8), #puts legend in upper left corner
+#         axis.line = element_line(colour = "black"), 
+#         panel.grid.major = element_blank(), 
+#         panel.grid.minor = element_blank(), 
+#         panel.background = element_blank(), 
+#         strip.text.x = element_text(size=15, face="bold")) #+
+#   #ggtitle("")
+# povplot3a
+
+povplot2 <- ggplot(data=aim2data, aes(x=z.crav_wi, y=fit, group=pov, color=pov)) + 
+  geom_line(size=2) +
+  labs(x = "Intraday Cravings (Z-Scored)", y = "Cigarettes per Hour", colour = "Intraday Poverty Exposure") +
+  theme(axis.text = element_text(angle = 0, size=15, colour="black"), 
+        axis.title = element_text(size=15, face="bold"), 
+        legend.text=element_text(size=15), 
+        legend.title=element_text(size=15, face="bold"), 
+        legend.key = element_blank(),
+        legend.position = c(.25,.8), #puts legend in upper left corner
+        axis.line = element_line(colour = "black"), 
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(), 
+        panel.background = element_blank(), 
+        strip.text.x = element_text(size=15, face="bold")) #+
+  #ggtitle("")
+povplot2
+```
+
+Analyses with Retailer Exposure as the Moderator
+After fixing k data, I did not fully optimize these models.
+
+```{r}
+library("lmerTest")
+
+#Aim 1
+# aim1.0 <- lmer(craving_score ~ z.feel_wi*z.exp_wi + z.feel_btw*z.exp_btw + z.pov_wi + z.pov_btw + (1+z.feel_wi*z.exp_wi+z.pov_wi|pID), data=kdata)
+# aim1.1 <- lmer(craving_score ~ z.feel_wi*z.exp_wi + z.feel_btw*z.exp_btw + z.pov_wi + z.pov_btw + (1+z.feel_wi*z.exp_wi+z.pov_wi||pID), data=kdata)
+# aim1.2 <- lmer(craving_score ~ z.feel_wi*z.exp_wi + z.feel_btw*z.exp_btw + z.pov_wi + z.pov_btw + (1+z.feel_wi+z.exp_wi+z.pov_wi||pID), data=kdata)
+# aim1.3 <- lmer(craving_score ~ z.feel_wi*z.exp_wi + z.feel_btw*z.exp_btw + z.pov_wi + z.pov_btw + (1+z.feel_wi+z.exp_wi||pID), data=kdata)
+# aim1.4 <- lmer(craving_score ~ z.feel_wi*z.exp_wi + z.feel_btw*z.exp_btw + z.pov_wi + z.pov_btw + (1+z.feel_wi||pID), data=kdata)
+aim1.5 <- lmer(craving_score ~ z.feel_wi*z.exp_wi + z.feel_btw*z.exp_btw + z.pov_wi + z.pov_btw + (1+z.feel_wi|pID), data=kdata)
+# anova(aim1.5,aim1.4) #use aim1.5
+summary(aim1.5)
+
+# aim2.0 <- lmer(cph ~ z.feel_wi*z.exp_wi + z.feel_btw*z.exp_btw + z.pov_wi + z.pov_btw + (1+z.feel_wi*z.exp_wi+z.pov_wi|pID), data=kdata)
+# aim2.1 <- lmer(cph ~ z.feel_wi*z.exp_wi + z.feel_btw*z.exp_btw + z.pov_wi + z.pov_btw + (1+z.feel_wi*z.exp_wi+z.pov_wi||pID), data=kdata)
+# aim2.2 <- lmer(cph ~ z.feel_wi*z.exp_wi + z.feel_btw*z.exp_btw + z.pov_wi + z.pov_btw + (1+z.feel_wi+z.exp_wi+z.pov_wi||pID), data=kdata)
+# aim2.3 <- lmer(cph ~ z.feel_wi*z.exp_wi + z.feel_btw*z.exp_btw + z.pov_wi + z.pov_btw + (1+z.feel_wi+z.exp_wi||pID), data=kdata)
+aim2.4 <- lmer(cph ~ z.feel_wi*z.exp_wi + z.feel_btw*z.exp_btw + z.pov_wi + z.pov_btw + (1+z.exp_wi||pID), data=kdata)
+# aim2.5 <- lmer(cph ~ z.feel_wi*z.exp_wi + z.feel_btw*z.exp_btw + z.pov_wi + z.pov_btw + (1+z.exp_wi|pID), data=kdata)
+summary(aim2.4)
+
+# aim1a.0 <- lmer(craving_score ~ z.feel_wi*z.exp_wi*z.pov_wi + z.feel_btw*z.exp_btw*z.pov_btw + (1+z.feel_wi*z.exp_wi*z.pov_wi|pID), data=kdata)
+# aim1a.1 <- lmer(craving_score ~ z.feel_wi*z.exp_wi*z.pov_wi + z.feel_btw*z.exp_btw*z.pov_btw + (1+z.feel_wi*z.exp_wi*z.pov_wi||pID), data=kdata)
+# aim1a.2 <- lmer(craving_score ~ z.feel_wi*z.exp_wi*z.pov_wi + z.feel_btw*z.exp_btw*z.pov_btw + (1+z.feel_wi*z.exp_wi+z.pov_wi+z.feel_wi:z.pov_wi+z.exp_wi:z.pov_wi||pID), data=kdata)
+# aim1a.3 <- lmer(craving_score ~ z.feel_wi*z.exp_wi*z.pov_wi + z.feel_btw*z.exp_btw*z.pov_btw + (1+z.feel_wi*z.exp_wi+z.pov_wi+z.feel_wi:z.pov_wi||pID), data=kdata)
+# aim1a.4 <- lmer(craving_score ~ z.feel_wi*z.exp_wi*z.pov_wi + z.feel_btw*z.exp_btw*z.pov_btw + (1+z.feel_wi*z.pov_wi+z.exp_wi||pID), data=kdata)
+# aim1a.5 <- lmer(craving_score ~ z.feel_wi*z.exp_wi*z.pov_wi + z.feel_btw*z.exp_btw*z.pov_btw + (1+z.feel_wi+z.pov_wi+z.exp_wi||pID), data=kdata)
+aim1a.6 <- lmer(craving_score ~ z.feel_wi*z.exp_wi*z.pov_wi + z.feel_btw*z.exp_btw*z.pov_btw + (1+z.feel_wi+z.exp_wi||pID), data=kdata)
+# aim1a.7 <- lmer(craving_score ~ z.feel_wi*z.exp_wi*z.pov_wi + z.feel_btw*z.exp_btw*z.pov_btw + (1+z.feel_wi+z.exp_wi|pID), data=kdata)
+summary(aim1a.6)
+
+# aim2a.0 <- lmer(cph ~ z.feel_wi*z.exp_wi*z.pov_wi + z.feel_btw*z.exp_btw*z.pov_btw + (1+z.feel_wi*z.exp_wi*z.pov_wi|pID), data=kdata)
+# aim2a.1 <- lmer(cph ~ z.feel_wi*z.exp_wi*z.pov_wi + z.feel_btw*z.exp_btw*z.pov_btw + (1+z.feel_wi*z.exp_wi*z.pov_wi||pID), data=kdata)
+# aim2a.2 <- lmer(cph ~ z.feel_wi*z.exp_wi*z.pov_wi + z.feel_btw*z.exp_btw*z.pov_btw + (1+z.feel_wi*z.exp_wi+z.pov_wi+z.feel_wi:z.pov_wi+z.exp_wi:z.pov_wi||pID), data=kdata)
+# aim2a.3 <- lmer(cph ~ z.feel_wi*z.exp_wi*z.pov_wi + z.feel_btw*z.exp_btw*z.pov_btw + (1+z.feel_wi*z.exp_wi+z.pov_wi+z.exp_wi:z.pov_wi||pID), data=kdata)
+# aim2a.4 <- lmer(cph ~ z.feel_wi*z.exp_wi*z.pov_wi + z.feel_btw*z.exp_btw*z.pov_btw + (1+z.feel_wi*z.exp_wi+z.pov_wi||pID), data=kdata)
+# aim2a.5 <- lmer(cph ~ z.feel_wi*z.exp_wi*z.pov_wi + z.feel_btw*z.exp_btw*z.pov_btw + (1+z.feel_wi+z.pov_wi+z.exp_wi||pID), data=kdata)
+# aim2a.6 <- lmer(cph ~ z.feel_wi*z.exp_wi*z.pov_wi + z.feel_btw*z.exp_btw*z.pov_btw + (1++z.exp_wi||pID), data=kdata)
+aim2a.7 <- lmer(cph ~ z.feel_wi*z.exp_wi*z.pov_wi + z.feel_btw*z.exp_btw*z.pov_btw + (1+z.exp_wi|pID), data=kdata)
+# anova(aim2a.6,aim2a.7) #prefer 2a.7
+summary(aim2a.7)
+```
+
+# Attempting some simple between-participants models
+
+```{r}
+smallkdata <- kdata %>% group_by(pID) %>%
+  summarize(pov = mean(z.pov_btw),
+            exp = mean(z.exp_btw),
+            feel = mean(z.feel_btw),
+            crav = mean(craving_score, na.rm=TRUE),
+            cph = mean(cph, na.rm=TRUE)) %>%
+  mutate(z.crav = scale(crav))
+aim1a <- lm(crav ~ feel*pov, data=smallkdata)
+summary(aim1a)
+aim1b <- lm(crav ~ feel*exp, data=smallkdata)
+summary(aim1b)
+aim1c <- lm(crav ~ feel*exp*pov, data=smallkdata)
+summary(aim1c)
+aim2a <- lm(cph ~ feel*pov, data=smallkdata)
+summary(aim2a)
+aim2b <- lm(cph ~ feel*exp, data=smallkdata)
+summary(aim2b)
+aim2c <- lm(cph ~ feel*exp*pov, data=smallkdata)
+summary(aim2c)
+aim3a <- lm(cph ~ z.crav*pov*feel, data=smallkdata)
+summary(aim3a)
+aim3b <- lm(cph ~ z.crav*exp*feel, data=smallkdata)
+summary(aim3b)
+aim3c <- lm(cph ~ z.crav*exp*pov*feel, data=smallkdata)
+summary(aim3c)
+```
+
+# Results for data created using 25-ft buffer
+
+Looking at correlations between predictors.
+```{r}
+library("corrplot")
+# Function for computing p value matrices
+cor.mtest <- function(mat, ...) {
+    mat <- as.matrix(mat)
+    n <- ncol(mat)
+    p.mat<- matrix(NA, n, n)
+    diag(p.mat) <- 0
+    for (i in 1:(n - 1)) {
+        for (j in (i + 1):n) {
+            tmp <- cor.test(mat[, i], mat[, j], ...)
+            p.mat[i, j] <- p.mat[j, i] <- tmp$p.value
+        }
+    }
+  colnames(p.mat) <- rownames(p.mat) <- colnames(mat)
+  p.mat
+}
+# Plotting correlations
+corrdata_btw <- betweendata %>% dplyr::select(cph_btw,
+                                              z.pov_btw,
+                                              z.crav_btw,
+                                              z.feel_btw,
+                                              z.exp_btw,
+                                              z.ladder,
+                                              z.coping,
+                                              z.age,
+                                              z.edu_parents,
+                                              z.edu_self,
+                                              gender)
+p.mat <- cor.mtest(corrdata_btw, use = "pairwise.complete.obs")
+c.mat <- cor(corrdata_btw, use = "pairwise.complete.obs")
+corrplot(c.mat, method="color",  
+         type="upper", 
+         addCoef.col = "black", # Add coefficient of correlation
+         tl.col="black", tl.srt=45, #Text label color and rotation
+         # Combine with significance
+         p.mat = p.mat, sig.level = 0.05, insig = "blank",
+         # Remove diagonal
+         diag = FALSE)
+p.mat
+corrdata_wi <- kdata %>% dplyr::select(cph,
+                                       z.pov_wi,
+                                       z.crav_wi,
+                                       z.feel_wi,
+                                       z.exp_wi)
+p.mat <- cor.mtest(corrdata_wi, use = "pairwise.complete.obs")
+c.mat <- cor(corrdata_wi, use = "pairwise.complete.obs")
+corrplot(c.mat, method="color",  
+         type="upper", 
+         addCoef.col = "black", # Add coefficient of correlation
+         tl.col="black", tl.srt=45, #Text label color and rotation
+         # Combine with significance
+         p.mat = p.mat, sig.level = 0.05, insig = "blank",
+         # Remove diagonal
+         diag = FALSE)
+p.mat
+```
+
+Modeling Relations between Predictors
+They appear to be orthogonal--possibly even related in the opposite direction to what you'd expect at the within-person level. A possible 3-way interaction may emerge with 25-ft retailer buffers.
+
+```{r}
+library("lmerTest")
+expov1 <- lmer(z.pov_wi ~ z.exp_wi*z.exp_btw*z.pov_btw + (0+z.exp_wi|pID), data=kdata)
+summary(expov1)
+
+expov2 <- lmer(z.exp_wi ~ z.pov_wi*z.exp_btw*z.pov_btw + (0+z.pov_wi|pID), data=kdata)
+summary(expov2)
+
+#povstress.0 <- lmer(feeling_score ~ z.pov_wi*z.exp_wi + z.pov_btw*z.exp_btw + (1+z.pov_wi*z.exp_wi|pID), data=kdata)
+#povstress.1 <- lmer(feeling_score ~ z.pov_wi*z.exp_wi + z.pov_btw*z.exp_btw + (1+z.pov_wi*z.exp_wi||pID), data=kdata)
+#povstress.2 <- lmer(feeling_score ~ z.pov_wi*z.exp_wi + z.pov_btw*z.exp_btw + (1+z.pov_wi+z.exp_wi||pID), data=kdata)
+povstress.3 <- lmer(feeling_score ~ z.pov_wi*z.exp_wi + z.pov_btw*z.exp_btw + (1+z.pov_wi||pID), data=kdata)
+#povstress.4 <- lmer(feeling_score ~ z.pov_wi*z.exp_wi + z.pov_btw*z.exp_btw + (1+z.pov_wi|pID), data=kdata)
+#anova(povstress.3,povstress.4) #prefer model 3
+summary(povstress.3)
+```
+
+Analyses with Poverty as the Moderator
+Threshold of inclusion for covariates: None--include all within and between predictors.
+
+```{r}
+library("lmerTest")
+
+#Aim 1
+#aim1.0 <- lmer(craving_score ~ z.feel_wi*z.pov_wi + z.feel_btw*z.pov_btw + z.exp_wi + z.exp_btw + (1+z.feel_wi*z.pov_wi+z.exp_wi|pID), data=kdata)
+#aim1.1 <- lmer(craving_score ~ z.feel_wi*z.pov_wi + z.feel_btw*z.pov_btw + z.exp_wi + z.exp_btw + (1+z.feel_wi*z.pov_wi+z.exp_wi||pID), data=kdata)
+#aim1.2 <- lmer(craving_score ~ z.feel_wi*z.pov_wi + z.feel_btw*z.pov_btw + z.exp_wi + z.exp_btw + (1+z.feel_wi+z.pov_wi+z.exp_wi||pID), data=kdata)
+aim1.3 <- lmer(craving_score ~ z.feel_wi*z.pov_wi + z.feel_btw*z.pov_btw + z.exp_wi + z.exp_btw + (1+z.feel_wi+z.exp_wi||pID), data=kdata)
+#aim1.4 <- lmer(craving_score ~ z.feel_wi*z.pov_wi + z.feel_btw*z.pov_btw + z.exp_wi + z.exp_btw + (1+z.feel_wi+z.exp_wi|pID), data=kdata)
+summary(aim1.3)
+
+#aim2.0 <- lmer(cph ~ z.feel_wi*z.pov_wi + z.feel_btw*z.pov_btw + z.exp_wi + z.exp_btw + (1+z.feel_wi*z.pov_wi+z.exp_wi|pID), data=kdata, control=lmerControl(optimizer="bobyqa", optCtrl=list(maxfun=100000)))
+#aim2.1 <- lmer(cph ~ z.feel_wi*z.pov_wi + z.feel_btw*z.pov_btw + z.exp_wi + z.exp_btw + (1+z.feel_wi*z.pov_wi+z.exp_wi||pID), data=kdata, control=lmerControl(optimizer="bobyqa", optCtrl=list(maxfun=100000)))
+#aim2.2 <- lmer(cph ~ z.feel_wi*z.pov_wi + z.feel_btw*z.pov_btw + z.exp_wi + z.exp_btw + (1+z.feel_wi+z.pov_wi+z.exp_wi||pID), data=kdata, control=lmerControl(optimizer="bobyqa", optCtrl=list(maxfun=100000)))
+aim2.3 <- lmer(cph ~ z.feel_wi*z.pov_wi + z.feel_btw*z.pov_btw + z.exp_wi + z.exp_btw + (1+z.exp_wi||pID), data=kdata, control=lmerControl(optimizer="bobyqa", optCtrl=list(maxfun=100000)))
+#aim2.4 <- lmer(cph ~ z.feel_wi*z.pov_wi + z.feel_btw*z.pov_btw + z.exp_wi + z.exp_btw + (1+z.exp_wi|pID), data=kdata, control=lmerControl(optimizer="bobyqa", optCtrl=list(maxfun=100000)))
+#anova(aim2.4,aim2.3) #prefer model 3
+summary(aim2.3)
+```
+
+
+# Older Analyses
+
+Analyses with Poverty as the Moderator
+Threshold of inclusion for covariates: bivariate correlation of p < .10
+```{r}
+library("lmerTest")
+#Aim 1: excluding z.pov_btw, z.feel_btw, and z.exp_btw because they don't correlate with cravings (p > .25)
+#aim1.0 <- lmer(craving_score ~ z.feel_wi*z.pov_wi + z.exp_wi + (1+z.feel_wi*z.pov_wi+z.exp_wi|pID), data=kdata)
+#aim1.1 <- lmer(craving_score ~ z.feel_wi*z.pov_wi + z.exp_wi + (1+z.feel_wi*z.pov_wi+z.exp_wi||pID), data=kdata)
+#aim1.2 <- lmer(craving_score ~ z.feel_wi*z.pov_wi + z.exp_wi + (1+z.feel_wi+z.pov_wi+z.exp_wi||pID), data=kdata)
+#aim1.3 <- lmer(craving_score ~ z.feel_wi*z.pov_wi + z.exp_wi + (1+z.feel_wi+z.exp_wi||pID), data=kdata)
+#aim1.4 <- lmer(craving_score ~ z.feel_wi*z.pov_wi + z.exp_wi + (1+z.feel_wi||pID), data=kdata)
+aim1.5 <- lmer(craving_score ~ z.feel_wi*z.pov_wi + z.exp_wi + (1+z.feel_wi|pID), data=kdata)
+#anova(aim1.4,aim1.5) #prefer model with correlation parameter
+summary(aim1.5)
+```
+
+Analyses with Poverty as the Moderator
+Threshold of inclusion for covariates: bivariate correlation of p < .25
+```{r}
+library("lmerTest")
+#Aim 1: excluding z.pov_btw because it doesn't correlate with cravings (p > .25)
+#aim1.0 <- lmer(craving_score ~ z.feel_wi*z.pov_wi + z.exp_wi + z.feel_btw + z.exp_btw + (1+z.feel_wi*z.pov_wi+z.exp_wi|pID), data=kdata)
+#aim1.1 <- lmer(craving_score ~ z.feel_wi*z.pov_wi + z.exp_wi + z.feel_btw + z.exp_btw + (1+z.feel_wi*z.pov_wi+z.exp_wi||pID), data=kdata)
+#aim1.2 <- lmer(craving_score ~ z.feel_wi*z.pov_wi + z.exp_wi + z.feel_btw + z.exp_btw + (1+z.feel_wi+z.pov_wi+z.exp_wi||pID), data=kdata)
+#aim1.3 <- lmer(craving_score ~ z.feel_wi*z.pov_wi + z.exp_wi + z.feel_btw + z.exp_btw + (1+z.feel_wi+z.exp_wi||pID), data=kdata)
+#aim1.4 <- lmer(craving_score ~ z.feel_wi*z.pov_wi + z.exp_wi + z.feel_btw + z.exp_btw + (1+z.feel_wi||pID), data=kdata)
+aim1.5 <- lmer(craving_score ~ z.feel_wi*z.pov_wi + z.exp_wi + z.feel_btw + z.exp_btw + (1+z.feel_wi|pID), data=kdata)
+#anova(aim1.4,aim1.5) #prefer model with correlation parameter
+summary(aim1.5)
+
+#Aim 2a: excluding z.pov_btw, z.exp_btw, z.exp_wi because they don't correlate with cph (p > .25)
+#aim2a.0 <- lmer(cph ~ z.crav_wi*z.pov_wi + z.crav_btw + (1+z.crav_wi*z.pov_wi|pID), data=kdata)
+#aim2a.1 <- lmer(cph ~ z.crav_wi*z.pov_wi + z.crav_btw + (1+z.crav_wi*z.pov_wi||pID), data=kdata)
+#aim2a.2 <- lmer(cph ~ z.crav_wi*z.pov_wi + z.crav_btw + (1+z.crav_wi+z.pov_wi||pID), data=kdata)
+aim2a.3 <- lmer(cph ~ z.crav_wi*z.pov_wi + z.crav_btw + (1+z.crav_wi||pID), data=kdata)
+#aim2a.4 <- lmer(cph ~ z.crav_wi*z.pov_wi + z.crav_btw + (1+z.crav_wi|pID), data=kdata)
+#anova(aim2a.3,aim2a.4) #prefer simpler model
+summary(aim2a.3)
+
+#Aim2b
+meddata <- kdata %>% filter(!is.na(z.crav_wi) & !is.na(z.feel_wi) & !is.na(z.exp_wi) & !is.na(cph))
+meddata$z.pov_wi.hi <- meddata$z.pov_wi - 1
+meddata$z.pov_wi.lo <- meddata$z.pov_wi + 1
+detach("package:lmerTest", unload=TRUE)
+med <- lmer(z.crav_wi ~ z.feel_wi*z.pov_wi + z.exp_wi + z.feel_btw + z.exp_btw + (1|pID), data=meddata)
+summary(med)
+summary(lmer(z.crav_wi ~ z.feel_wi*z.pov_wi.hi + z.exp_wi + z.feel_btw + z.exp_btw + (1|pID), data=meddata))
+out <- lmer(cph ~ z.feel_wi + z.feel_wi:z.pov_wi + z.crav_wi*z.pov_wi + z.exp_wi + z.feel_btw + z.exp_btw + z.crav_btw + (1|pID), data=meddata)
+summary(out)
+summary(lmer(cph ~ z.feel_wi + z.feel_wi:z.pov_wi.hi + z.crav_wi*z.pov_wi.hi + z.exp_wi + z.feel_btw + z.exp_btw + z.crav_btw + (1|pID), data=meddata))
+mediation <- mediate(med, out, treat="z.feel_wi", mediator="z.crav_wi", sims=5000)
+summary(mediation)
+#test.modmed doesn't work for lmer models
+#test.modmed(mediation, covariates.1 = list(z.medinc = 1), covariates.2 = list(z.medinc = -1), sims = 5000)
+mediation_low <- mediate(med, out, treat="z.feel_wi", mediator="z.crav_wi", covariates = list(z.pov_wi = -1), sims=5000)
+summary(mediation_low)
+mediation_high <- mediate(med, out, treat="z.feel_wi", mediator="z.crav_wi", covariates = list(z.pov_wi = 1), sims=5000)
+summary(mediation_high)
+```
+
+Analyses with Exposure as the Moderator
+Threshold of inclusion for covariates: None--include all within and between predictors.
+
+```{r}
+library("lmerTest")
+#Aim 1:
+#aim1.0 <- lmer(craving_score ~ z.feel_wi*z.exp_wi*z.exp_btw + z.pov_wi*z.pov_btw + z.feel_btw + (1+z.feel_wi*z.pov_wi+z.exp_wi|pID), data=kdata)
+#aim1.1 <- lmer(craving_score ~ z.feel_wi*z.exp_wi*z.exp_btw + z.pov_wi*z.pov_btw + z.feel_btw + (1+z.feel_wi*z.pov_wi+z.exp_wi||pID), data=kdata)
+#aim1.2 <- lmer(craving_score ~ z.feel_wi*z.exp_wi*z.exp_btw + z.pov_wi*z.pov_btw + z.feel_btw + (1+z.feel_wi+z.pov_wi+z.exp_wi||pID), data=kdata)
+#aim1.3 <- lmer(craving_score ~ z.feel_wi*z.exp_wi*z.exp_btw + z.pov_wi*z.pov_btw + z.feel_btw + (1+z.feel_wi+z.pov_wi||pID), data=kdata)
+#aim1.4 <- lmer(craving_score ~ z.feel_wi*z.exp_wi*z.exp_btw + z.pov_wi*z.pov_btw + z.feel_btw + (1+z.feel_wi||pID), data=kdata)
+aim1.5 <- lmer(craving_score ~ z.feel_wi*z.exp_wi*z.exp_btw + z.pov_wi*z.pov_btw + z.feel_btw + (1+z.feel_wi|pID), data=kdata)
+#anova(aim1.4,aim1.5) #prefer model 5
+summary(aim1.5)
+
+#Aim 1:
+#aim1.0 <- lmer(craving_score ~ z.feel_wi*z.exp_wi + z.feel_btw*z.exp_btw + z.pov_wi + z.pov_btw + (1+z.feel_wi*z.pov_wi+z.exp_wi|pID), data=kdata)
+#aim1.1 <- lmer(craving_score ~ z.feel_wi*z.exp_wi + z.feel_btw*z.exp_btw + z.pov_wi + z.pov_btw + (1+z.feel_wi*z.pov_wi+z.exp_wi||pID), data=kdata)
+#aim1.2 <- lmer(craving_score ~ z.feel_wi*z.exp_wi + z.feel_btw*z.exp_btw + z.pov_wi + z.pov_btw + (1+z.feel_wi+z.pov_wi+z.exp_wi||pID), data=kdata)
+#aim1.3 <- lmer(craving_score ~ z.feel_wi*z.exp_wi + z.feel_btw*z.exp_btw + z.pov_wi + z.pov_btw + (1+z.feel_wi+z.exp_wi||pID), data=kdata)
+aim1.4 <- lmer(craving_score ~ z.feel_wi*z.exp_wi + z.feel_btw*z.exp_btw + z.pov_wi + z.pov_btw + (1+z.feel_wi||pID), data=kdata)
+#aim1.5 <- lmer(craving_score ~ z.feel_wi*z.exp_wi + z.feel_btw*z.exp_btw + z.pov_wi + z.pov_btw + (1+z.feel_wi|pID), data=kdata)
+summary(aim1.4)
+
+#Aim 2a:
+#aim2a.0 <- lmer(cph ~ z.crav_wi*z.exp_wi + z.crav_btw*z.exp_btw + z.pov_wi + z.pov_btw + (1+z.crav_wi*z.pov_wi+z.exp_wi|pID), data=kdata)
+#aim2a.1 <- lmer(cph ~ z.crav_wi*z.exp_wi + z.crav_btw*z.exp_btw + z.pov_wi + z.pov_btw + (1+z.crav_wi*z.pov_wi+z.exp_wi||pID), data=kdata)
+#aim2a.2 <- lmer(cph ~ z.crav_wi*z.exp_wi + z.crav_btw*z.exp_btw + z.pov_wi + z.pov_btw + (1+z.crav_wi+z.pov_wi+z.exp_wi||pID), data=kdata)
+aim2a.3 <- lmer(cph ~ z.crav_wi*z.exp_wi + z.crav_btw*z.exp_btw + z.pov_wi + z.pov_btw + (1+z.crav_wi+z.exp_wi||pID), data=kdata)
+#aim2a.4 <- lmer(cph ~ z.crav_wi*z.exp_wi + z.crav_btw*z.exp_btw + z.pov_wi + z.pov_btw + (1+z.crav_wi+z.exp_wi|pID), data=kdata)
+summary(aim2a.3)
+
+aim2a_alt <- aim2a.3 <- lmer(cph ~ z.crav_wi*z.pov_wi + z.crav_btw*z.pov_btw + z.feel + z.feel:z.pov_wi + z.feel_btw + z.feel_btw:z.pov_btw + z.exp_wi + z.exp_btw + (1+z.crav_wi+z.exp_wi + z.feel_wi||pID), data=kdata)
+summary(aim2a_alt)
+```
+
+Analyses with Exposure as the Moderator
+Covariate threshold for inclusion: p < .10
+```{r}
+library("lmerTest")
+
+#Aim 1: excluding z.pov_btw, z.feel_btw, z.exp_btw, and z.pov_wi because they don't correlate with cravings (p > .25)
+#aim1.0 <- lmer(craving_score ~ z.feel_wi*z.exp_wi + (1+z.feel_wi*z.exp_wi|pID), data=kdata)
+#aim1.1 <- lmer(craving_score ~ z.feel_wi*z.exp_wi + (1+z.feel_wi*z.exp_wi||pID), data=kdata)
+#aim1.2 <- lmer(craving_score ~ z.feel_wi*z.exp_wi + (1+z.feel_wi+z.exp_wi||pID), data=kdata)
+#aim1.3 <- lmer(craving_score ~ z.feel_wi*z.exp_wi + (1+z.feel_wi||pID), data=kdata)
+aim1.4 <- lmer(craving_score ~ z.feel_wi*z.exp_wi + (1+z.feel_wi|pID), data=kdata)
+#anova(aim1.3,aim1.4) #prefer model with correlation parameter
+summary(aim1.4)
+```
+
+Analyses with Exposure as the Moderator
+Covariate threshold for inclusion: p < .25
+```{r}
+library("lmerTest")
+
+#Aim 1: excluding z.pov_btw and z.pov_wi because they don't correlate with cravings (p > .25)
+#aim1.0 <- lmer(craving_score ~ z.feel_wi*z.exp_wi + z.feel_btw + z.exp_btw + (1+z.feel_wi*z.exp_wi|pID), data=kdata)
+#aim1.1 <- lmer(craving_score ~ z.feel_wi*z.exp_wi + z.feel_btw + z.exp_btw + (1+z.feel_wi*z.exp_wi||pID), data=kdata)
+#aim1.2 <- lmer(craving_score ~ z.feel_wi*z.exp_wi + z.feel_btw + z.exp_btw + (1+z.feel_wi+z.exp_wi||pID), data=kdata)
+#aim1.3 <- lmer(craving_score ~ z.feel_wi*z.exp_wi + z.feel_btw + z.exp_btw + (1+z.feel_wi||pID), data=kdata)
+aim1.4 <- lmer(craving_score ~ z.feel_wi*z.exp_wi + z.feel_btw + z.exp_btw + (1+z.feel_wi|pID), data=kdata)
+#anova(aim1.3,aim1.4) #prefer model with correlation parameter
+summary(aim1.4)
+#Aim 2a:
+#aim2a.0 <- lmer(cph ~ z.crav_wi*z.exp_wi + z.feel_wi + z.feel_btw + z.crav_btw + (1+z.crav_wi*z.exp_wi+z.feel_wi|pID), data=kdata)
+aim2a.1 <- lmer(cph ~ z.crav_wi*z.exp_wi + z.feel_wi + z.feel_btw + z.crav_btw + (1+z.crav_wi*z.exp_wi+z.feel_wi||pID), data=kdata)
+summary(aim2a.1)
+#Aim 2b:
+meddata <- kdata %>% filter(!is.na(z.crav_wi) & !is.na(z.feel_wi) & !is.na(z.exp_wi) & !is.na(cph))
+detach("package:lmerTest", unload=TRUE)
+med <- lmer(z.crav_wi ~ z.feel_wi*z.exp_wi + z.feel_btw + z.exp_btw + (1|pID), data=meddata)
+summary(med)
+out <- lmer(cph ~ z.feel_wi + z.feel_wi:z.exp_wi + z.crav_wi*z.exp_wi + z.feel_btw + z.crav_btw + (1|pID), data=meddata)
+summary(out)
+mediation <- mediate(med, out, treat="z.feel_wi", mediator="z.crav_wi", sims=5000)
+summary(mediation)
+#test.modmed doesn't work for lmer models
+#test.modmed(mediation, covariates.1 = list(z.medinc = 1), covariates.2 = list(z.medinc = -1), sims = 5000)
+mediation_low <- mediate(med, out, treat="z.feel_wi", mediator="z.crav_wi", covariates = list(z.exp_wi = -1), sims=5000)
+summary(mediation_low)
+mediation_high <- mediate(med, out, treat="z.feel_wi", mediator="z.crav_wi", covariates = list(z.exp_wi = 1), sims=5000)
+summary(mediation_high)
+```
+
+Analyses with Poverty and Exposure Co-Moderators
+
+Seems like the poverty x exposure interaction is explaining something at least at the between level, but the simplified model doesn't show it...
+```{r}
+library("lmerTest")
+#aim1.0 <- lmer(craving_score ~ z.feel_wi*z.pov_wi*z.exp_wi + z.feel_btw*z.pov_btw*z.exp_btw + (1+z.feel_wi*z.pov_wi*z.exp_wi|pID), data=kdata)
+#aim1.1 <- lmer(craving_score ~ z.feel_wi*z.pov_wi*z.exp_wi + z.feel_btw*z.pov_btw*z.exp_btw + (1+z.feel_wi*z.pov_wi*z.exp_wi||pID), data=kdata)
+#aim1.2 <- lmer(craving_score ~ z.feel_wi*z.pov_wi*z.exp_wi + z.feel_btw*z.pov_btw*z.exp_btw + (1+z.feel_wi*z.pov_wi + z.exp_wi + z.exp_wi:z.pov_wi + z.feel_wi:z.exp_wi||pID), data=kdata)
+#aim1.3 <- lmer(craving_score ~ z.feel_wi*z.pov_wi*z.exp_wi + z.feel_btw*z.pov_btw*z.exp_btw + (1+z.feel_wi*z.pov_wi + z.exp_wi||pID), data=kdata)
+#aim1.4 <- lmer(craving_score ~ z.feel_wi*z.pov_wi*z.exp_wi + z.feel_btw*z.pov_btw*z.exp_btw + (1+z.feel_wi + z.pov_wi + z.exp_wi||pID), data=kdata)
+#aim1.5 <- lmer(craving_score ~ z.feel_wi*z.pov_wi*z.exp_wi + z.feel_btw*z.pov_btw*z.exp_btw + (1+z.feel_wi + z.exp_wi||pID), data=kdata)
+#aim1.6 <- lmer(craving_score ~ z.feel_wi*z.pov_wi*z.exp_wi + z.feel_btw*z.pov_btw*z.exp_btw + (1+z.feel_wi||pID), data=kdata)
+aim1.7 <- lmer(craving_score ~ z.feel_wi*z.pov_wi*z.exp_wi + z.feel_btw*z.pov_btw*z.exp_btw + (1+z.feel_wi|pID), data=kdata)
+#anova(aim1.6,aim1.7) #use model 7
+summary(aim1.7)
+
+#aim2.0 <- lmer(cph ~ z.crav_wi*z.pov_wi*z.exp_wi + z.crav_btw*z.pov_btw*z.exp_btw + (1+z.crav_wi*z.pov_wi*z.exp_wi|pID), data=kdata)
+#aim2.1 <- lmer(cph ~ z.crav_wi*z.pov_wi*z.exp_wi + z.crav_btw*z.pov_btw*z.exp_btw + (1+z.crav_wi*z.pov_wi*z.exp_wi||pID), data=kdata)
+#aim2.2 <- lmer(cph ~ z.crav_wi*z.pov_wi*z.exp_wi + z.crav_btw*z.pov_btw*z.exp_btw + (1+z.crav_wi*z.pov_wi + z.exp_wi + z.exp_wi:z.pov_wi + z.exp_wi:z.crav_wi||pID), data=kdata)
+#aim2.3 <- lmer(cph ~ z.crav_wi*z.pov_wi*z.exp_wi + z.crav_btw*z.pov_btw*z.exp_btw + (1+z.crav_wi + z.exp_wi*z.pov_wi + z.exp_wi:z.crav_wi||pID), data=kdata)
+#aim2.4 <- lmer(cph ~ z.crav_wi*z.pov_wi*z.exp_wi + z.crav_btw*z.pov_btw*z.exp_btw + (1+z.pov_wi + z.exp_wi*z.crav_wi||pID), data=kdata)
+#aim2.5 <- lmer(cph ~ z.crav_wi*z.pov_wi*z.exp_wi + z.crav_btw*z.pov_btw*z.exp_btw + (1+z.pov_wi + z.exp_wi+z.crav_wi||pID), data=kdata)
+aim2.6 <- lmer(cph ~ z.crav_wi*z.pov_wi*z.exp_wi + z.crav_btw*z.pov_btw*z.exp_btw + (1 + z.exp_wi+z.crav_wi||pID), data=kdata)
+#aim2.7 <- lmer(cph ~ z.crav_wi*z.pov_wi*z.exp_wi + z.crav_btw*z.pov_btw*z.exp_btw + (1 + z.exp_wi+z.crav_wi|pID), data=kdata)
+summary(aim2.6)
+
+aim2.6_alt <- lmer(cph ~ z.crav_wi*z.pov_wi*z.exp_wi + z.feel_wi + z.feel_wi:z.pov_wi + z.feel_wi:z.exp_wi + z.feel_wi:z.pov_wi:z.exp_wi + z.crav_btw*z.pov_btw*z.exp_btw + z.feel_btw + z.feel_btw:z.pov_btw + z.feel_btw:z.exp_btw + z.feel_btw:z.pov_btw:z.exp_btw + (1 + z.exp_wi+z.crav_wi+z.feel_wi||pID), data=kdata)
+summary(aim2.6_alt)
+
+#Computing an estimate of people who are exposed to *both* poverty and retailers
+kdata$expov_wi <- kdata$z.pov_wi*kdata$z.exp_wi
+kdata$expov_btw <- kdata$z.pov_btw*kdata$z.exp_btw
+
+#aim1.0 <- lmer(craving_score ~ z.feel_wi*expov_wi + z.feel_btw*expov_btw + (1+z.feel_wi*expov_wi|pID), data=kdata)
+#aim1.1 <- lmer(craving_score ~ z.feel_wi*expov_wi + z.feel_btw*expov_btw + (1+z.feel_wi*expov_wi||pID), data=kdata)
+#aim1.2 <- lmer(craving_score ~ z.feel_wi*expov_wi + z.feel_btw*expov_btw + (1+z.feel_wi+expov_wi||pID), data=kdata)
+#aim1.3 <- lmer(craving_score ~ z.feel_wi*expov_wi + z.feel_btw*expov_btw + (1+z.feel_wi||pID), data=kdata)
+aim1.4 <- lmer(craving_score ~ z.feel_wi*expov_wi + z.feel_btw*expov_btw + (1+z.feel_wi|pID), data=kdata)
+#anova(aim1.3,aim1.4) #use aim1.4
+summary(aim1.4)
+
+aim2.0 <- lmer(cph ~ z.crav_wi*expov_wi + z.crav_btw*expov_btw + (1+z.crav_wi*expov_wi|pID), data=kdata)
+aim2.1 <- lmer(cph ~ z.crav_wi*expov_wi + z.crav_btw*expov_btw + (1+z.crav_wi*expov_wi||pID), data=kdata)
+summary(aim2.1)
+```
+
+# Distributions of K variables
+
+```{r}
+hist(kdata$z.feel_wi)
+hist(kdata$z.crav_wi)
+hist(kdata$z.pov_wi)
+hist(kdata$z.exp_wi)
+hist(kdata$z.feel_btw)
+hist(kdata$z.crav_btw)
+hist(kdata$pov_btw)
+hist(kdata$exp_btw)
+hist(kdata$cph)
+
+hist(kdata$pov_avg)
+povertydata <- kdata %>% 
+  group_by(pID) %>%
+  summarize(M = mean(pov_avg, na.rm=TRUE),
+            SD = sd(pov_avg, na.rm=TRUE))
+summary(povertydata$M)
+sd(povertydata$M)
+summary(povertydata$SD)
+sd(povertydata$SD)
+```
+
+# Looking at distributions of simulated data
+
+```{r}
+genfakedata <- function (J,K,magnitude){
+  time <- rep(seq(1,K,length=K),J) # K measurements per person
+  pID <- rep(1:J, each=K)          # J person IDs
+  smoke <- rnorm(J*K)              # bin-level smoking rate
+  mood_wi <- rnorm(J*K)            # bin-level stress
+  pov_wi <- rnorm(J*K)             # bin-level poverty exposure
+  exp_wi <- rnorm(J*K)             # bin-level retailer exposure
+  mood_bt <- rep(rnorm(J), each=K) # person-level stress
+  pov_bt <- rep(rnorm(J), each=K)  # person-level poverty exposure
+  exp_bt <- rep(rnorm(J), each=K)  # person-level retailer exposure
+  ##fixed effects for aim 1
+  b0 <-  5.238           #intercept value from model
+  b1 <- -0.3810           #stress (within)
+  b2 <- -0.006601           #poverty (within)
+  b3 <-  0.05258           #retailer exposure (within)
+  b4 <- -0.2521           #stress (between)
+  b5 <- -0.01120           #poverty (between)
+  b6 <-  0.1356           #retail exposure (between)
+  b7 <- -0.06798*magnitude #stress x poverty (within)
+  b8 <- -0.6991           #stress x poverty (between)
+  #random effects
+  vsub.b0 <- 2.4942    #true between person variance in the intercept (i.e., random intercept variance)
+  vsub.b1 <- 0.4083    #true between-person variance in the stress slope
+  vresid  <- 3.8944    #true residual variance
+  #combine fixed and random effects per person
+  b0.int <- rnorm(J,b0,sqrt(vsub.b0)) #generate an intercept for each person
+  b1.slope <- rnorm(J,b1,sqrt(vsub.b1)) #generate slopes of stress for each person
+  #simulated and scaled values for cravings
+  crave_wi <- rnorm(J*K, 
+                    b0.int[pID] #use the person's intercept
+                    +b1.slope[pID]*mood_wi #average within stress effect, taking into account random slope
+                    +b2*pov_wi  #average within poverty effect
+                    +b3*exp_wi  #average within retailer effect
+                    +b4*mood_bt #average between stress effect
+                    +b5*pov_bt  #average between poverty effect
+                    +b6*exp_bt  #average between retailer effect
+                    +b7*mood_wi*pov_wi #average within interaction effect
+                    +b8*mood_bt*pov_bt #average between interaction effect
+                    ,sqrt(vresid)) #residual
+  crave_wi <- ifelse(crave_wi>9, 9, 
+                     ifelse(crave_wi<0, 0, crave_wi))
+  averages <- data.frame(crave_wi, pID) %>% 
+    group_by(pID) %>%
+    dplyr::summarize(crave_bt = mean(crave_wi, na.rm=TRUE), .groups = "drop") %>%
+    mutate_at(.vars = "crave_bt", .funs = scale)
+  crave_bt <- rep(averages$crave_bt, each=K)
+  scaledata <- data.frame(crave_wi, pID) %>%
+    group_by(pID) %>%
+    mutate(z.crave_wi = scale(crave_wi))
+  z.crave_wi <- scaledata$z.crave_wi
+  ##fixed effects for aim 2
+  b7 <-  1.217            #intercept value from model
+  b8 <-  0.03169            #stress (within)
+  b9 <-  0.009759            #poverty (within)
+  b10 <- 0.03732            #exposure (within)
+  b11 <- -0.3743           #stress (between)
+  b12 <- 0.09353            #poverty (between)
+  b13 <- 0.2292           #exposure (between)
+  b14 <- 0.03399*magnitude  #stress x poverty (within)
+  b15 <- 0.1020           #stress x poverty (between)
+  #random effects
+  vsub.b7 <- 0.603089    #true between-person variance in the intercept (i.e., random intercept variance)
+  vsub.b10 <- 0.003863    #true between-person variance in the exposure slope
+  vresid  <- 1.040091    #true residual variance
+  #combine fixed and random effects per person
+  b7.int <- rnorm(J,b7,sqrt(vsub.b7)) #generate an intercept for each person
+  b10.slope <- rnorm(J,b10,sqrt(vsub.b10)) #generate slopes of exposure for each person
+  cph <- rnorm(J*K, 
+               b7.int[pID] #use the person's intercept
+               +b8*mood_wi #average within stress effect, taking into account random slope
+               +b9*pov_wi  #average within poverty effect
+               +b10.slope[pID]*exp_wi #average within exposure effect, taking into account random slope
+               +b11*mood_bt  #average between stress effect
+               +b12*pov_bt #average between poverty effect
+               +b13*exp_bt #average between exposure effect
+               +b14*mood_wi*pov_wi #average within interaction effect
+               +b15*mood_bt*pov_bt #average between interaction effect
+               ,sqrt(vresid)) #residual
+  fakedata <- data.frame(pID,time,cph,crave_wi,z.crave_wi,mood_wi,pov_wi,exp_wi,mood_bt,exp_bt,crave_bt,pov_bt)
+  fakedata$cph[fakedata$cph<0] <- 0
+  return(fakedata)
+}
+fakek <- genfakedata(250,45,1)
+hist(fakek$mood_wi)
+hist(fakek$z.crave_wi)
+hist(fakek$pov_wi)
+hist(fakek$exp_wi)
+hist(fakek$mood_bt)
+hist(fakek$crave_bt)
+hist(fakek$pov_bt)
+hist(fakek$exp_bt)
+hist(fakek$cph)
+hist(fakek$crave_wi)
+```
+
+# Looking at distributions of economic and exposure predictors
+
+```{r}
+covbindata <- covbindata %>% rename(pID = filename)
+hist(covbindata$gini_avg)
+hist(covbindata$medinc_avg)
+hist(covbindata$black_avg)
+hist(covbindata$white_avg)
+hist(covbindata$degree_avg)
+hist(covbindata$pov_avg[covbindata$pID=="GEO036"], xlim = range(0,.5))
+hist(covbindata$pov_avg[covbindata$pID=="GEO022"])
+hist(covbindata$exp_uniq)
+hist(covbindata$exp_all)
+
+summarydata <- covbindata %>% group_by(pID) %>%
+  summarize(edu_self = na.omit(mean(z.edu_self))) %>%
+  group_by(edu_self) %>%
+  summarize(count = n())
+barplot(summarydata$count)
+
+summarydata2 <- covbindata %>% group_by(pID) %>%
+  summarize(bins = length(na.omit(covbin)))
+summary(summarydata2$bins)
+sd(summarydata2$bins)
+```
+
+# Looking at relationships between exposure predictors
+
+```{r}
+#exp <- lmer(z.exp_uniq~zd.exp_uniq + (1+zd.exp_uniq|pID), data=covbindata) 
+exp <- lmer(z.exp_uniq~zt.exp_uniq + (1+zt.exp_uniq||pID), data=covbindata) 
+summary(exp) # positive relationship
+exp <- lmer(z.exp_uniq~zd.exp_uniq + (1+zd.exp_uniq||pID), data=covbindata) 
+summary(exp) # strong positive relationship as might be expected from derived predictors
+exp <- lmer(zd.exp_uniq~zt.exp_uniq + (1+zt.exp_uniq||pID), data=covbindata)
+summary(exp) #the higher their modal exposure, the lower/more negative the difference between their current and modal gini tends to be.
+```
+
+# Is exposure related to location-based poverty?
+It's not.
+
+```{r}
+library("Hmisc")
+rcorr(covbindata$z.pov,covbindata$z.exp_all)
+rcorr(covbindata$z.pov,covbindata$z.exp_uniq)
+expov_all <- lmer(z.exp_all ~ z.pov + (1+z.pov||pID), data=covbindata)
+summary(expov_all)
+expov_uniq <- lmer(z.exp_uniq ~ z.pov + (1+z.pov||pID), data=covbindata)
+summary(expov_uniq)
+```
+
+# Is exposure related to smoking?
+Nope.
+
+```{r}
+expov_all <- lmer(cph ~ z.exp_all + (1|pID), data=covbindata)
+summary(expov_all)
+expov_uniq <- lmer(cph ~ z.exp_uniq + (1|pID), data=covbindata)
+summary(expov_uniq)
+expov_all <- lmer(cph ~ z.exp_all*z.pov + (1|pID), data=covbindata)
+summary(expov_all)
+expov_uniq <- lmer(cph ~ z.exp_uniq*z.pov + (1|pID), data=covbindata)
+summary(expov_uniq)
+```
+
+# Playing with the data file
+Looking first at some simple relationships between the different predictors
+
+```{r}
+#gini <- lmer(z.gini~zd.gini + (1+zd.gini|pID), data=covbindata) #failed to converge
+#gini <- lmer(z.gini~zd.gini + (1|pID), data=covbindata) #singular fit
+gini <- lm(z.gini~zt.gini, data=covbindata) 
+summary(gini) # strong positive relationship as might be expected from derived predictors
+gini <- lm(z.gini~zd.gini, data=covbindata) 
+summary(gini) # weaker but still strong positive relationship
+gini <- lm(zd.gini~zt.gini, data=covbindata) 
+summary(gini) # the higher their modal gini, the lower/more negative the difference between their current and modal gini tends to be.
+
+#Negative relationship between feeling and craving!
+summ(lmer(craving_score~z.feel + (1+z.feel|pID), data=covbindata))
+
+#Fairly strong negative relationship between cigarettes smoked per hour and time since last cigarette: probably stick to cph?
+summ(lmer(cph ~ z.mins + (1+z.mins|pID), data=covbindata))
+
+#Effect weakens when you account for time since last smoke
+summ(lmer(craving_score ~ z.feel + z.mins + (1+z.feel|pID), data=covbindata))
+
+#Effect remains significant when you account for cigarettes per hour
+summ(lmer(craving_score ~ z.feel + z.cph + (1+z.feel+z.cph||pID), data=covbindata))
+
+#Effect weakens when you account for cigarettes per hour and time since last smoke
+summ(lmer(craving_score ~ z.feel + z.cph + z.mins + (1+z.feel|pID), data=covbindata))
+```
+
+# Initial models for cph without census data
+
+Some suggestive trends, but nothing too reliable here.
+
+```{r}
+# Additive Model
+#summ(lmer(cph ~ z.feel + z.crave + z.mins + (1+z.feel+z.crave+z.mins|pID), data=covbindata))
+#summ(lmer(cph ~ z.feel + z.crave + z.mins + (1+z.feel+z.crave+z.mins||pID), data=covbindata))
+summ(lmer(cph ~ z.feel + z.crave + z.mins + (1+z.crave+z.mins||pID), data=covbindata))
+#summ(lmer(cph ~ z.feel + z.crave + z.mins + (1+z.crave+z.mins|pID), data=covbindata)) #singular fit
+
+# Interactive Model
+#summ(lmer(cph ~ z.feel*z.crave + z.mins + (1+z.feel*z.crave+z.mins|pID), data=covbindata))
+#summ(lmer(cph ~ z.feel*z.crave + z.mins + (1+z.feel*z.crave+z.mins||pID), data=covbindata))
+#summ(lmer(cph ~ z.feel*z.crave + z.mins + (1+z.feel+z.crave+z.mins||pID), data=covbindata))
+summ(lmer(cph ~ z.feel*z.crave + z.mins + (1+z.crave+z.mins||pID), data=covbindata))
+#summ(lmer(cph ~ z.feel*z.crave + z.mins + (1+z.crave+z.mins|pID), data=covbindata)) #singular fit
+
+# Full Model
+#summ(lmer(cph ~ z.feel*z.crave*z.mins + (1+z.feel*z.crave*z.mins|pID), data=covbindata))
+#summ(lmer(cph ~ z.feel*z.crave*z.mins + (1+z.feel*z.crave*z.mins||pID), data=covbindata))
+summ(lmer(cph ~ z.feel*z.crave*z.mins + (1+z.crave+z.mins||pID), data=covbindata))
+#summ(lmer(cph ~ z.feel*z.crave*z.mins + (1+z.crave+z.mins|pID), data=covbindata)) #singular fit
+
+# Excluding minutes as an extra variable that is strongly correlated with cph anyhow: craving predicts smoking rate
+#summ(lmer(cph ~ z.feel*z.crave + (1+z.feel*z.crave|pID), data=covbindata))
+#summ(lmer(cph ~ z.feel*z.crave + (1+z.feel*z.crave||pID), data=covbindata))
+#summ(lmer(cph ~ z.feel*z.crave + (1+z.crave||pID), data=covbindata))
+summ(lmer(cph ~ z.feel*z.crave + (1+z.crave|pID), data=covbindata))
+```
+
+# Initial models for cravings without census data
+
+Some suggestive trends, but nothing too reliable here.
+
+```{r}
+# Additive Model
+#summ(lmer(craving_score ~ z.feel + z.cph + z.mins + (1+z.feel+z.cph+z.mins|pID), data=covbindata))
+#summ(lmer(craving_score ~ z.feel + z.cph + z.mins + (1+z.feel+z.cph+z.mins||pID), data=covbindata))
+summ(lmer(craving_score ~ z.feel + z.cph + z.mins + (1+z.feel+z.mins||pID), data=covbindata))
+#summ(lmer(craving_score ~ z.feel + z.cph + z.mins + (1+z.feel+z.mins|pID), data=covbindata)) # singular
+
+# Interactive Model
+#summ(lmer(craving_score ~ z.feel*z.cph + z.mins + (1+z.feel*z.cph+z.mins|pID), data=covbindata))
+#summ(lmer(craving_score ~ z.feel*z.cph + z.mins + (1+z.feel*z.cph+z.mins||pID), data=covbindata))
+#summ(lmer(craving_score ~ z.feel*z.cph + z.mins + (1+z.feel+z.cph+z.mins||pID), data=covbindata))
+summ(lmer(craving_score ~ z.feel*z.cph + z.mins + (1+z.feel+z.mins||pID), data=covbindata))
+#summ(lmer(craving_score ~ z.feel*z.cph + z.mins + (1+z.feel+z.mins|pID), data=covbindata))
+
+
+# Full Model
+#summ(lmer(craving_score ~ z.feel*z.cph*z.mins + (1+z.feel*z.cph*z.mins|pID), data=covbindata))
+#summ(lmer(craving_score ~ z.feel*z.cph*z.mins + (1+z.feel*z.cph*z.mins||pID), data=covbindata))
+#summ(lmer(craving_score ~ z.feel*z.cph*z.mins + (1+z.feel*z.cph+z.mins+z.feel:z.mins+z.cph:z.mins||pID), data=covbindata))
+summ(lmer(craving_score ~ z.feel*z.cph*z.mins + (1+z.feel+z.mins||pID), data=covbindata))
+#summ(lmer(craving_score ~ z.feel*z.cph*z.mins + (1+z.feel+z.mins|pID), data=covbindata))
+
+# Excluding minutes as an extra variable that is strongly correlated with cph anyhow: feel predicts cravings
+#summ(lmer(craving_score ~ z.feel*z.cph + (1+z.feel*z.cph|pID), data=covbindata))
+summ(lmer(craving_score ~ z.feel*z.cph + (1+z.feel*z.cph||pID), data=covbindata))
+```
+
+## Looking at effects of neighborhood location and coping
+
+The effect of mood on craving remains consistent through most analyses. Interestingly, there are some strong three-way interactions with coping that depend on racial segregation at the participant's location and their mood. Three-way interactions survive after excluding White participants from the sample. Other economic effects also arise when excluding Whites.
+
+If you tend not to smoke as a coping mechanism, then you want to smoke if you're feeling bad while in a White neighborhood.
+If you tend to smoke as a coping mechanism, then you want to smoke if you're feeling good in a White neighborhood or feeling bad in a non-White location.
+
+Craving increases when in proximity to more tobacco retailers! This is also true among non-White participants.
+
+```{r}
+mindata = covbindata[covbindata$Minority==.5,]
+summary(lmer(craving_score ~ z.gini*z.feel + z.cph + (1+z.feel+z.cph||pID), data=covbindata))
+summary(lmer(craving_score ~ z.gini*z.feel*z.coping + z.cph + (1+z.gini+z.feel+z.cph||pID), data=covbindata)) #negative 2way
+summary(lmer(craving_score ~ z.medinc*z.feel + z.cph + (1+z.medinc*z.feel+z.cph||pID), data=covbindata))
+summary(lmer(craving_score ~ z.medinc*z.feel*z.coping + z.cph + (1+z.medinc*z.feel+z.cph||pID), data=covbindata))
+summary(lmer(craving_score ~ z.black*z.feel + z.cph + (1+z.black+z.feel+z.cph||pID), data=covbindata))
+black <- lmer(craving_score ~ z.black*z.feel*z.coping + z.cph + (1+z.feel+z.cph||pID), data=covbindata) #negative 3way
+summary(black)
+summary(lmer(craving_score ~ z.white*z.feel + z.cph + (1+z.white+z.feel+z.cph||pID), data=covbindata))
+white <- lmer(craving_score ~ z.white*z.feel*z.coping + z.cph + (1+z.feel+z.cph||pID), data=covbindata) #positive 3way
+summary(white)
+summary(lmer(craving_score ~ z.degree*z.feel + z.cph + (1+z.degree*z.feel+z.cph||pID), data=covbindata))
+summary(lmer(craving_score ~ z.degree*z.feel*z.coping + z.cph + (1+z.degree*z.feel+z.cph||pID), data=covbindata))
+summary(lmer(craving_score ~ z.pov*z.feel + z.cph + (1+z.pov*z.feel+z.cph||pID), data=covbindata))
+summary(lmer(craving_score ~ z.pov*z.feel*z.coping + z.cph + (1+z.pov*z.feel+z.cph||pID), data=covbindata))
+summary(lmer(craving_score ~ z.exp_uniq*z.feel + z.cph + (1+z.feel+z.cph||pID), data=covbindata))
+summary(lmer(craving_score ~ z.exp_uniq*z.feel*z.coping + z.cph + (1+z.feel+z.cph||pID), data=covbindata))
+
+interact_plot(black,
+              pred=z.black,
+              modx=z.feel,
+              mod2=z.coping,
+              interval=TRUE,
+              main.title = "Interaction between percent Black population of present location,\ncurrent mood, and coping habit")
+
+interact_plot(white,
+              pred=z.white,
+              modx=z.feel,
+              mod2=z.coping,
+              interval=TRUE,
+              main.title = "Interaction between percent White population of present location,\ncurrent mood, and coping habit")
+```
+
+## Looking at effects of neighborhood location controlling for the most frequently visited census tract
+
+All preceding results remain significant.
+
+```{r}
+#mindata = covbindata[covbindata$Minority==.5,]
+summary(lmer(craving_score ~ z.gini*z.feel + z.cph + zt.gini + (1+z.feel+z.cph||pID), data=covbindata))
+summary(lmer(craving_score ~ z.gini*z.feel*z.coping + z.cph + zt.gini + (1+z.gini+z.feel+z.cph||pID), data=covbindata)) #negative 2way
+summary(lmer(craving_score ~ z.medinc*z.feel + z.cph + zt.medinc + (1+z.medinc*z.feel+z.cph||pID), data=covbindata))
+summary(lmer(craving_score ~ z.medinc*z.feel*z.coping + z.cph + zt.medinc + (1+z.medinc*z.feel+z.cph||pID), data=covbindata))
+summary(lmer(craving_score ~ z.black*z.feel + z.cph + zt.black + (1+z.black+z.feel+z.cph||pID), data=covbindata))
+summary(lmer(craving_score ~ z.black*z.feel*z.coping + z.cph + zt.black + (1+z.feel|pID), data=covbindata)) #negative 3way
+summary(lmer(craving_score ~ z.white*z.feel + z.cph + zt.white + (1+z.white+z.feel+z.cph||pID), data=covbindata))
+summary(lmer(craving_score ~ z.white*z.feel*z.coping + z.cph + zt.white + (1+z.feel+z.cph||pID), data=covbindata)) #positive 3way
+summary(lmer(craving_score ~ z.degree*z.feel + z.cph + zt.degree + (1+z.degree*z.feel+z.cph||pID), data=covbindata))
+summary(lmer(craving_score ~ z.degree*z.feel*z.coping + z.cph + zt.degree + (1+z.degree*z.feel+z.cph||pID), data=covbindata))
+summary(lmer(craving_score ~ z.pov*z.feel + z.cph + zt.pov + (1+z.pov*z.feel+z.cph||pID), data=covbindata))
+summary(lmer(craving_score ~ z.pov*z.feel*z.coping + z.cph + zt.pov + (1+z.pov*z.feel+z.cph||pID), data=covbindata))
+summary(lmer(craving_score ~ z.exp_uniq*z.feel + z.cph + zt.exp_uniq + (1+z.feel+z.cph||pID), data=covbindata))
+summary(lmer(craving_score ~ z.exp_uniq*z.feel*z.coping + z.cph + zt.exp_uniq + (1+z.feel+z.cph||pID), data=covbindata))
+```
+
+## Looking at effects of coping and neighborhood location standardized by difference between current and most frequently visited census tract
+
+If you tend not to smoke as a coping mechanism, then you want to smoke if you're feeling bad while in a Whiter than usual neighborhood.
+If you tend to smoke as a coping mechanism, then you want to smoke if you're feeling good in a Whiter than usual neighborhood or feeling bad in a  location that is less White than usual.
+
+Three-way interaction effects survive when looking at just the non-White sample. Some economic effects also appear.
+
+Controlling for relative retailer exposure, we also see an interaction between feeling and coping that only amplifies when focusing on the non-white sample.
+
+```{r}
+mindata = covbindata[covbindata$Minority==.5,]
+summary(lmer(craving_score ~ zd.gini*z.feel + z.cph + (1+z.feel+z.cph||pID), data=mindata))
+summary(lmer(craving_score ~ zd.gini*z.feel*z.coping + z.cph + (1+zd.gini+z.feel+z.cph||pID), data=mindata)) #ns negative 2way
+summary(lmer(craving_score ~ zd.medinc*z.feel + z.cph + (1+zd.medinc*z.feel+z.cph||pID), data=mindata))
+summary(lmer(craving_score ~ zd.medinc*z.feel*z.coping + z.cph + (1+zd.medinc*z.feel+z.cph||pID), data=mindata))
+summary(lmer(craving_score ~ zd.black*z.feel + z.cph + (1+zd.black+z.feel+z.cph||pID), data=mindata))
+black <- lmer(craving_score ~ zd.black*z.feel*z.coping + z.cph + (1+z.feel+z.cph||pID), data=mindata) #negative 3way
+summary(black)
+summary(lmer(craving_score ~ zd.white*z.feel + z.cph + (1+zd.white+z.feel+z.cph||pID), data=mindata))
+white <- lmer(craving_score ~ zd.white*z.feel*z.coping + z.cph + (1+z.feel|pID), data=mindata) #positive 3way
+summary(white)
+summary(lmer(craving_score ~ zd.degree*z.feel + z.cph + (1+zd.degree*z.feel+z.cph||pID), data=mindata))
+summary(lmer(craving_score ~ zd.degree*z.feel*z.coping + z.cph + (1+zd.degree*z.feel+z.cph||pID), data=mindata))
+summary(lmer(craving_score ~ zd.pov*z.feel + z.cph + (1+zd.pov*z.feel+z.cph||pID), data=mindata))
+summary(lmer(craving_score ~ zd.pov*z.feel*z.coping + z.cph + (1+zd.pov*z.feel+z.cph||pID), data=mindata))
+summary(lmer(craving_score ~ zd.exp_uniq*z.feel + z.cph + (1+z.feel||pID), data=mindata))
+summary(lmer(craving_score ~ zd.exp_uniq*z.feel*z.coping + z.cph + (1+z.feel||pID), data=mindata)) #interaction between feeling and coping
+
+
+interact_plot(black,
+              pred=zd.black,
+              modx=z.feel,
+              mod2=z.coping,
+              interval=TRUE,
+              main.title = "Interaction between percent Black population of present location\n(vs. most frequent location), current mood, and coping habit")
+
+interact_plot(white,
+              pred=zd.white,
+              modx=z.feel,
+              mod2=z.coping,
+              interval=TRUE,
+              main.title = "Interaction between percent White population of present location\n(vs. most frequent location), current mood, and coping habit")
+```
+
+# Testing the waters for my original ideas about mood moderating the effects of location on cravings.
+
+Temporal locations do not appear to predict mood in the non-White or whole sample. However, individual differences in the most frequent location do appear to marginally predict mood, especially for non-White participants. Something to think about going forward...
+
+Location-based exposure doesn't predict mood.
+
+```{r}
+#Step 1: Is there an effect of location on mood?
+summary(lmer(feeling_score ~ z.gini + (1|pID), data=mindata))
+summary(lmer(feeling_score ~ z.medinc + (1+z.medinc||pID), data=mindata))
+summary(lmer(feeling_score ~ z.black + (1+z.black|pID), data=mindata))
+summary(lmer(feeling_score ~ z.white + (1+z.white|pID), data=mindata))
+summary(lmer(feeling_score ~ z.degree + (1+z.degree|pID), data=mindata))
+summary(lmer(feeling_score ~ z.pov + (1+z.pov|pID), data=mindata))
+summary(lmer(feeling_score ~ z.exp_uniq + (1+z.exp_uniq|pID), data=covbindata))
+
+summary(lmer(feeling_score ~ z.gini + zt.gini + (1|pID), data=mindata))
+summary(lmer(feeling_score ~ z.medinc + zt.medinc + (1+z.medinc||pID), data=mindata))
+summary(lmer(feeling_score ~ z.black + zt.black + (1+z.black|pID), data=mindata))
+summary(lmer(feeling_score ~ z.white + zt.white + (1+z.white|pID), data=mindata))
+summary(lmer(feeling_score ~ z.degree + zt.degree + (1+z.degree|pID), data=mindata))
+summary(lmer(feeling_score ~ z.pov + zt.pov + (1+z.pov|pID), data=mindata))
+summary(lmer(feeling_score ~ z.exp_uniq + zt.exp_uniq + (1+z.exp_uniq||pID), data=covbindata))
+
+summary(lmer(feeling_score ~ zd.gini + (1|pID), data=mindata))
+summary(lmer(feeling_score ~ zd.medinc + (1+zd.medinc||pID), data=mindata))
+summary(lmer(feeling_score ~ zd.black + (1+zd.black|pID), data=mindata))
+summary(lmer(feeling_score ~ zd.white + (1+zd.white|pID), data=mindata))
+summary(lmer(feeling_score ~ zd.degree + (1+zd.degree|pID), data=mindata))
+summary(lmer(feeling_score ~ zd.pov + (1+zd.pov|pID), data=mindata))
+summary(lmer(feeling_score ~ zd.exp_uniq + (1|pID), data=covbindata))
+```
+
+# Trying out a new mediation model based on the relationship between cravings and mood
+
+Results aren't terribly promising here, but I'm curious what happens if we start to look at location as a moderator.
+
+```{r}
+#Unload lmerTest because it doesn't play nice with the mediate package
+detach(package:lmerTest, unload=TRUE)
+#Filter out rows without data that would lead to different numbers of observations between models
+meddata <- covbindata %>%
+  filter(!is.na(cph) & !is.na(z.feel) & !is.na(z.crave))
+#Step 1: Is there an effect of feeling on craving? - Yes
+med <- lmer(z.crave ~ z.feel + (1+z.feel|pID), data=meddata)
+summary(med)
+#Step 2: Outcome model - Looks kind of promising
+out <- lmer(cph ~ z.feel + z.crave + (1+z.crave|pID), data=meddata)
+summary(out)
+#Step 3: Mediation? Not so much.
+mediation <- mediate(med, out, treat="z.feel", mediator="z.crave", sims=5000)
+summary(mediation)
+
+mindata <- meddata %>%
+  filter(Minority==.5)
+#Step 1: Is there an effect of feeling on craving? - No
+med <- lmer(z.crave ~ z.feel + (1+z.feel|pID), data=mindata)
+summary(med)
+#Step 2: Outcome model - Looks kind of promising
+out <- lmer(cph ~ z.feel + z.crave + (1+z.crave|pID), data=mindata)
+summary(out)
+#Step 3: Mediation? Not so much, but there's sort of a direct effect.
+mediation <- mediate(med, out, treat="z.feel", mediator="z.crave", sims=5000)
+summary(mediation)
+```
+
+# Path A Moderation
+
+For all participants, there was moderation of location for income-based location metrics, but this disappeared after accounting for the participants' top locations.
+
+Effects were present but somewhat weaker for the non-White sample and after accounting for the most frequently visited location.
+
+Nothing here for location-based exposure.
+
+```{r}
+library(lmerTest)
+
+gini <- lmer(z.crave ~ z.feel*z.gini + (1+z.feel|pID), data=covbindata)
+summary(gini) #p = .018
+medinc <- lmer(z.crave ~ z.feel*z.medinc + (1+z.feel*z.medinc||pID), data=covbindata)
+summary(medinc)
+black <- lmer(z.crave ~ z.feel*z.black + (1+z.feel*z.black||pID), data=covbindata)
+summary(black)
+white <- lmer(z.crave ~ z.feel*z.white + (1+z.feel*z.white||pID), data=covbindata)
+summary(white)
+degree <- lmer(z.crave ~ z.feel*z.degree + (1+z.feel+z.degree|pID), data=covbindata)
+summary(degree)
+pov <- lmer(z.crave ~ z.feel*z.pov + (1+z.feel+z.pov||pID), data=covbindata)
+summary(pov) #p = .037 (remains significant controlling for subjective SES and education level)
+exp <- lmer(z.crave ~ z.feel*z.exp_uniq + (1+z.feel||pID), data=covbindata)
+summary(exp) #p = .047 (p = .10 at 100ft)
+exp <- lmer(z.crave ~ z.feel*z.exp_all + (1+z.feel||pID), data=covbindata)
+summary(exp) #p = .042 (p = .12 at 100ft)
+exp <- lmer(z.crave ~ z.feel*z.pov*z.exp_uniq + (1+z.feel||pID), data=covbindata)
+summary(exp) #p = .046 (p = .07 at 100ft)
+
+interact_plot(gini,
+              pred=z.feel,
+              modx=z.gini,
+              interval=TRUE,
+              main.title = "Interaction between gini at present location and craving")
+
+interact_plot(medinc,
+              pred=z.feel,
+              modx=z.medinc,
+              interval=TRUE,
+              main.title = "Interaction between median income at present location and craving")
+
+interact_plot(pov,
+              pred=z.feel,
+              modx=z.pov,
+              interval=TRUE,
+              main.title = "Interaction between % below poverty at present location and craving",
+              theme)
+
+gini <- lmer(z.crave ~ z.feel*zd.gini + (1+z.feel|pID), data=covbindata)
+summary(gini) 
+medinc <- lmer(z.crave ~ z.feel*zd.medinc + (1+z.feel*zd.medinc||pID), data=covbindata)
+summary(medinc)
+black <- lmer(z.crave ~ z.feel*zd.black + (1+z.feel*zd.black||pID), data=covbindata)
+summary(black)
+white <- lmer(z.crave ~ z.feel*zd.white + (1+z.feel*zd.white||pID), data=covbindata)
+summary(white)
+degree <- lmer(z.crave ~ z.feel*zd.degree + (1+z.feel+zd.degree|pID), data=covbindata)
+summary(degree)
+pov <- lmer(z.crave ~ z.feel*zd.pov + (1+z.feel+zd.pov|pID), data=covbindata)
+summary(pov)
+exp <- lmer(z.crave ~ z.feel*zd.pov*zd.exp_all + (1+z.feel|pID), data=covbindata)
+summary(exp)
+
+interact_plot(gini,
+              pred=z.feel,
+              modx=zd.gini,
+              interval=TRUE,
+              main.title = "Interaction between gini at present location and craving")
+
+interact_plot(medinc,
+              pred=z.feel,
+              modx=zd.medinc,
+              interval=TRUE,
+              main.title = "Interaction between median income at present location and craving")
+
+interact_plot(pov,
+              pred=z.feel,
+              modx=zd.pov,
+              interval=TRUE,
+              main.title = "Interaction between % below poverty at present location and craving")
+```
+
+# plots
+
+```{r}
+library(lme4)
+library(lmerTest)
+library(effects)
+library(viridis)
+
+pov <- lmer(craving_score ~ z.feel*z.pov + (1+z.feel+z.pov||pID), data=covbindata)
+summary(pov)
+sim_slopes(pov, pred=z.feel, modx = z.pov)
+sim_slopes(pov, pred=z.pov, modx = z.feel)
+
+
+interactdata <- data.frame(effect("z.feel:z.pov", pov, 
+                                  xlevels=(list(z.feel = c(-3,-2,-1,0,1), z.pov = c(-1,1)))))
+interactdata$pov <- factor(interactdata$z.pov,
+                           levels = c(-1, 1),
+                           labels = c("Poverty Exposure (-1 SD)", "Poverty Exposure (+1 SD)"))
+
+#https://www.thinkingondata.com/something-about-viridis-library/
+
+povplot <- ggplot() + 
+  geom_point(data=covbindata, aes(x=z.feel, y=craving_score, col=z.pov)) +
+  scale_color_viridis(option = "D") +
+  #scale_color_gradient(low="blue", high="red") +
+  geom_line(data=interactdata,
+            aes(x=z.feel, y=fit, group=pov),
+            color=c(rep("#482677FF",5),rep("#3CBB75FF",5)),
+            size=2) +
+  labs(x = "Standardized Mood", y = "Cigarette Cravings", colour = "Standardized\nPoverty\nExposure") +
+  theme(axis.text = element_text(angle = 0, size=15, colour="black"), 
+        axis.title = element_text(size=15, face="bold"), 
+        legend.text=element_text(size=15), 
+        legend.title=element_text(size=15, face="bold"), 
+        legend.key = element_blank(),
+        axis.line = element_line(colour = "black"), 
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(), 
+        panel.background = element_blank(), 
+        strip.text.x = element_text(size=15, face="bold")) #+
+  #ggtitle()
+povplot
+                          
+```
+
+# Path B Moderation
+
+For all participants, there was moderation of location for income-based location metrics, but this disappeared after accounting for the participants' top locations.
+
+Effects were present but somewhat weaker for the non-White sample.
+
+Nothing here for location-based exposure.
+
+```{r}
+library(lmerTest)
+out <- lmer(cph ~ z.feel + z.crave*z.gini + (1+z.crave||pID), data=mindata)
+medinc <- lmer(cph ~ z.feel + z.crave*z.medinc + (1+z.crave+z.medinc||pID), data=covbindata) # p = .007
+summary(medinc)
+out <- lmer(cph ~ z.feel + z.crave*z.black + (1+z.crave+z.black||pID), data=mindata)
+out <- lmer(cph ~ z.feel + z.crave*z.white + (1+z.crave+z.white||pID), data=mindata) # p = .100
+out <- lmer(cph ~ z.feel + z.crave*z.degree + (1+z.crave+z.degree||pID), data=mindata) # p = .082
+pov <- lmer(cph ~ z.feel + z.crave*z.pov + z.ladder + z.edu_self + (1+z.crave|pID), data=covbindata) # p = .009
+summary(pov)
+sim_slopes(pov, pred=z.crave, modx = z.pov)
+sim_slopes(pov, pred=z.pov, modx = z.crave)
+exp <- lmer(cph ~ z.feel + z.crave*z.exp_uniq + (1+z.crave+z.exp_uniq||pID), data=covbindata)
+summary(exp)
+exp <- lmer(cph ~ z.feel + z.crave*z.exp_all + (1+z.crave+z.exp_all||pID), data=covbindata)
+summary(exp)
+exp <- lmer(cph ~ z.feel + z.crave*z.exp_uniq*z.pov + (1+z.crave+z.exp_uniq+z.pov||pID), data=covbindata)
+summary(exp) # nothing, but craving by poverty interaction remains significant (same at both 25 and 100 ft)
+exp <- lmer(cph ~ z.feel + z.crave*z.exp_all*z.pov + (1+z.crave+z.exp_all+z.pov||pID), data=covbindata)
+summary(exp) # nothing, but craving by poverty interaction remains significant (same at both 25 and 100 ft)
+
+out <- lmer(cph ~ z.feel + z.crave*z.gini + zt.gini + (1+z.crave||pID), data=mindata)
+out <- lmer(cph ~ z.feel + z.crave*z.medinc + zt.medinc + (1+z.crave+z.medinc||pID), data=mindata) # p = .008
+out <- lmer(cph ~ z.feel + z.crave*z.black + zt.black + (1+z.crave+z.black||pID), data=mindata)
+out <- lmer(cph ~ z.feel + z.crave*z.white + zt.white + (1+z.crave+z.white||pID), data=mindata) # p = .101
+out <- lmer(cph ~ z.feel + z.crave*z.degree + zt.degree + (1+z.crave+z.degree||pID), data=mindata) # p = .087
+out <- lmer(cph ~ z.feel + z.crave*z.pov + zt.pov + (1+z.crave+z.pov||pID), data=mindata) # p = .009
+out <- lmer(cph ~ z.feel + z.crave*z.exp_uniq + zt.exp_uniq + (1+z.crave+z.exp_uniq||pID), data=mindata)
+summary(out) #decrease in cph?, p = .078
+
+out <- lmer(cph ~ z.feel + z.crave*zd.gini + (1+z.crave||pID), data=mindata)
+out <- lmer(cph ~ z.feel + z.crave*zd.medinc + (1+z.crave+zd.medinc||pID), data=mindata)
+out <- lmer(cph ~ z.feel + z.crave*zd.black + (1+z.crave+zd.black||pID), data=mindata)
+out <- lmer(cph ~ z.feel + z.crave*zd.white + (1+z.crave+zd.white||pID), data=mindata)
+out <- lmer(cph ~ z.feel + z.crave*zd.degree + (1+z.crave+zd.degree||pID), data=mindata) 
+out <- lmer(cph ~ z.feel + z.crave*zd.pov + (1+z.crave+zd.pov||pID), data=mindata)
+out <- lmer(cph ~ z.feel + z.crave*zd.exp_uniq + (1+z.crave+zd.exp_uniq||pID), data=mindata)
+
+interact_plot(medinc,
+              pred=z.crave,
+              modx=z.medinc,
+              interval=TRUE,
+              main.title = "Interaction between median income at present location and craving")
+
+interact_plot(pov,
+              pred=z.crave,
+              modx=z.pov,
+              modx.values=c(-1,1),
+              x.label="Standardized Cigarette Cravings",
+              y.label="Cigarettes Smoked per Hour",
+              legend.main="Standardized Poverty\nExposure",
+              modx.labels=c("Low (-1 SD)", "High (+1 SD)"),
+              interval=TRUE,
+              colors=c("#482677FF", "#3CBB75FF"),
+              line.thickness=2) + 
+  ylim(.5,2) +
+  theme(axis.text = element_text(angle = 0, size=15, colour="black"), 
+        axis.title = element_text(size=15, face="bold"), 
+        legend.text=element_text(size=15), 
+        legend.title=element_text(size=15, face="bold"), 
+        legend.key = element_blank(),
+        axis.line = element_line(colour = "black"), 
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(), 
+        panel.background = element_blank(), 
+        strip.text.x = element_text(size=15, face="bold"))
+```
+
+# plots
+
+```{r}
+library(lme4)
+library(lmerTest)
+library(effects)
+library(viridis)
+
+pov <- lmer(cph ~ z.crave*z.pov + (1+z.crave+z.pov||pID), data=covbindata)
+sim_slopes(pov, pred=z.crave, modx = z.pov)
+sim_slopes(pov, pred=z.pov, modx = z.crave)
+summary(pov)
+
+interactdata <- data.frame(effect("z.crave:z.pov", pov, 
+                                  xlevels=(list(z.crave = c(-1.9,-1,0,1,1.5), z.pov = c(-1,1)))))
+interactdata$pov <- factor(interactdata$z.pov,
+                           levels = c(-1, 1),
+                           labels = c("Poverty Exposure (-1 SD)", "Poverty Exposure (+1 SD)"))
+
+#https://www.thinkingondata.com/something-about-viridis-library/
+
+povplot <- ggplot() + 
+  geom_point(data=covbindata, aes(x=z.crave, y=cph, col=z.pov)) +
+  scale_color_viridis(option = "D") +
+  #scale_color_gradient(low="blue", high="red") +
+  geom_line(data=interactdata,
+            aes(x=z.crave, y=fit, group=pov),
+            color=c(rep("#482677FF",5),rep("#3CBB75FF",5)),
+            size=2) +
+  ylim(0,6) +
+  labs(x = "Standardized Cigarette Cravings", y = "Cigarette Smoked per Hour", colour = "Standardized\nPoverty\nExposure") +
+  theme(axis.text = element_text(angle = 0, size=15, colour="black"), 
+        axis.title = element_text(size=15, face="bold"), 
+        legend.text=element_text(size=15), 
+        legend.title=element_text(size=15, face="bold"), 
+        legend.key = element_blank(),
+        axis.line = element_line(colour = "black"), 
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(), 
+        panel.background = element_blank(), 
+        strip.text.x = element_text(size=15, face="bold")) #+
+  #ggtitle()
+povplot
+                          
+```
+
+# Attempted Moderated Mediation: Median Income
+
+Removed all random slopes because of issues with the mediate function.
+
+```{r}
+#Unload lmerTest because it doesn't play nice with the mediate package
+detach(package:lmerTest, unload=TRUE)
+#Filter out rows without data that would lead to different numbers of observations between models
+meddata <- covbindata %>%
+  filter(!is.na(cph) & !is.na(z.feel) & !is.na(z.crave)) %>%
+  mutate(medinc.lo = z.medinc+1,
+         medinc.hi = z.medinc-1)
+#Step 1: Is there an effect of feeling on craving? - Yes
+med <- lmer(z.crave ~ z.feel*z.medinc + (1|pID), data=meddata)
+summary(med)
+medlo <- lmer(z.crave ~ z.feel*medinc.lo + (1|pID), data=meddata)
+summary(medlo)
+#Step 2: Outcome model - Looks kind of promising
+out <- lmer(cph ~ z.feel*z.medinc + z.crave + z.crave:z.medinc + (1|pID), data=meddata)
+summary(out)
+outlo <- lmer(cph ~ z.feel*medinc.lo + z.crave + z.crave:medinc.lo + (1|pID), data=meddata)
+summary(outlo)
+#Step 3: Mediation? Closer than before
+mediation <- mediate(med, out, treat="z.feel", mediator="z.crave", sims=5000)
+summary(mediation)
+#Step 4: Moderated Mediation?
+#test.modmed doesn't work for lmer models
+#test.modmed(mediation, covariates.1 = list(z.medinc = 1), covariates.2 = list(z.medinc = -1), sims = 5000)
+mediation_low <- mediate(med, out, treat="z.feel", mediator="z.crave", covariates = list(z.medinc = -1), sims=5000)
+summary(mediation_low) #significant mediation at low median income, ACME = -.0435, [-0.072, -0.020], p < .001
+mediation_high <- mediate(med, out, treat="z.feel", mediator="z.crave", covariates = list(z.medinc = 1), sims=5000)
+summary(mediation_high) #non-significant mediation at high median income, ACME = -.007, [-0.020, 0.030], p = .577
+```
+
+# Attempted Moderated Mediation: % Living Below Poverty
+
+Removed all random slopes because of issues with the mediate function
+
+```{r}
+#Unload lmerTest because it doesn't play nice with the mediate package
+detach(package:lmerTest, unload=TRUE)
+#Filter out rows without data that would lead to different numbers of observations between models
+meddata <- covbindata %>%
+  filter(!is.na(cph) & !is.na(z.feel) & !is.na(z.crave) & !is.na(z.edu_self)) %>% #remove edu_self if not controlling for this.
+  mutate(pov.lo = z.pov+1,
+         pov.hi = z.pov-1)
+#Step 1: Is there an effect of feeling on craving? - Yes
+med <- lmer(z.crave ~ z.feel*z.pov + z.edu_self + z.ladder + (1|pID), data=meddata)
+summary(med)
+medhi <- lmer(z.crave ~ z.feel*pov.hi + z.edu_self + z.ladder + (1|pID), data=meddata)
+summary(medhi)
+#Step 2: Outcome model - Looks kind of promising
+out <- lmer(cph ~ z.feel*z.pov + z.crave + z.crave:z.pov + z.edu_self + z.ladder + (1|pID), data=meddata)
+summary(out)
+outhi <- lmer(cph ~ z.feel*pov.hi + z.crave + z.crave:pov.hi + z.edu_self + z.ladder + (1|pID), data=meddata)
+summary(outhi)
+#Step 3: Mediation? Closer than before
+mediation <- mediate(med, out, treat="z.feel", mediator="z.crave", sims=5000)
+summary(mediation)
+#Step 4: Moderated Mediation?
+#test.modmed doesn't work for lmer models
+#test.modmed(mediation, covariates.1 = list(z.medinc = 1), covariates.2 = list(z.medinc = -1), sims = 5000)
+mediation_low <- mediate(med, out, treat="z.feel", mediator="z.crave", covariates = list(z.pov = -1), sims=5000)
+summary(mediation_low) #significant mediation at low median income, ACME = .013, [-0.013, 0.040], p = .32
+mediation_high <- mediate(med, out, treat="z.feel", mediator="z.crave", covariates = list(z.pov = 1), sims=5000)
+summary(mediation_high) #non-significant mediation at high median income, ACME = -.054, [-0.091, -0.020], p = .001
+```
+
+```{r}
+#Filter out rows without data that would lead to different numbers of observations between models
+meddata <- covbindata %>%
+  filter(!is.na(cph) & !is.na(z.feel) & !is.na(z.crave)) %>%
+  mutate(pov.lo = z.pov+1,
+         pov.hi = z.pov-1) %>%
+  mutate(pID.f = factor(pID))
+mediated.mlm <- boot(data = meddata, 
+                     statistic=indirect.mlm,
+                     R = 100,
+                     strata = meddata$pID.f,
+                     y = "cph",
+                     x = "feeling_score",
+                     mediator = "craving_score",
+                     group.id = "pID.f",
+                     uncentered.x = T,
+                     random.c = F,
+                     covariates = "z.pov")
+indirect.mlm.summary(mediated.mlm)
+
+mediated.mlm <- boot(data = meddata, 
+                     statistic = indirect.mlm,
+                     R = 100,
+                     strata = meddata$pID.f,
+                     y = "cph",
+                     x = "feeling_score",
+                     mediator = "craving_score",
+                     group.id = "pID.f",
+                     uncentered.x = T,
+                     random.c = F,
+                     covariates = "pov.lo")
+indirect.mlm.summary(mediated.mlm)
+
+mediated.mlm <- boot(data = meddata, 
+                     statistic = indirect.mlm,
+                     R = 100,
+                     strata = meddata$pID.f,
+                     y = "cph",
+                     x = "feeling_score",
+                     mediator = "craving_score",
+                     group.id = "pID.f",
+                     uncentered.x = T,
+                     random.c = F,
+                     covariates = "pov.hi")
+indirect.mlm.summary(mediated.mlm)
+```
+
+
+# Attempted Moderated Mediation: Income Inequality
+
+Removed all random slopes because of issues with the mediate function
+
+```{r}
+#Unload lmerTest because it doesn't play nice with the mediate package
+detach(package:lmerTest, unload=TRUE)
+#Filter out rows without data that would lead to different numbers of observations between models
+meddata <- covbindata %>%
+  filter(!is.na(cph) & !is.na(z.feel) & !is.na(z.crave)) %>%
+  mutate(gini.lo = z.gini+1,
+         gini.hi = z.gini-1)
+#Step 1: Is there an effect of feeling on craving? - Yes
+med <- lmer(z.crave ~ z.feel*z.gini + (1|pID), data=meddata)
+summary(med)
+medhi <- lmer(z.crave ~ z.feel*gini.hi + (1|pID), data=meddata)
+summary(medhi)
+#Step 2: Outcome model - Looks kind of promising
+out <- lmer(cph ~ z.feel*z.gini + z.crave + z.crave:z.gini + (1|pID), data=meddata)
+summary(out)
+outhi <- lmer(cph ~ z.feel*gini.hi + z.crave + z.crave:gini.hi + (1|pID), data=meddata)
+summary(outhi)
+#Step 3: Mediation? Significant indirect effect, ACME = -.021, [-0.043, -0.000], p = .48
+mediation <- mediate(med, out, treat="z.feel", mediator="z.crave", sims=5000)
+summary(mediation)
+#Step 4: Moderated Mediation?
+#test.modmed doesn't work for lmer models
+#test.modmed(mediation, covariates.1 = list(z.medinc = 1), covariates.2 = list(z.medinc = -1), sims = 5000)
+mediation_low <- mediate(med, out, treat="z.feel", mediator="z.crave", covariates = list(z.gini = -1), sims=5000)
+summary(mediation_low) #significant mediation at low median income, ACME = -.003, [-0.026, 0.020], p = .77 (ADE = .104, p = .035)
+mediation_high <- mediate(med, out, treat="z.feel", mediator="z.crave", covariates = list(z.gini = 1), sims=5000)
+summary(mediation_high) #non-significant mediation at high median income, ACME = -.036, [-0.074, -0.000], p = .042
+```
+
+```{r}
+save.image("/Volumes/cnlab/GeoScan/Pilot_Analyses/CensusAnalyses_15.10.20.RData")
+save.image("/Volumes/cnlab/GeoScan/Pilot_Analyses/ExposureAnalyses_1.11.20.RData")
+```
+
