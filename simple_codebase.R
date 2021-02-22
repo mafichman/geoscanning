@@ -79,7 +79,8 @@ cleanData <- uploadGeodata("Data/Geotracking/multi_json_test") %>%
 
 geotrackingLeaflet(cleanData %>% 
                      filter(filename == "file1") %>% # option to select subject(s) in advance
-                     sample_n(., 10000), stayEvents = FALSE)
+                     sample_n(., 10000), 
+                   stayEvents = FALSE)
 
 #######
 
