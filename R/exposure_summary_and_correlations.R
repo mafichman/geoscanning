@@ -140,13 +140,19 @@ ggplot()+
 
 # This is ready to be a function - needs something for whether retailer was open or closed
 
+# Each retailer seems to have variable lat/lon - how do we address this?
+
 exposures_by_location <- cleanData_Retailers_Tracts %>% 
   as.data.frame() %>% ungroup() %>%
   filter(is.na(trade_name)== FALSE & lead_lag_avg_mph < 30) %>% 
   group_by(filename, lat, lon, datetime) %>% 
   slice(1) %>% 
   ungroup() %>% 
-  mutate(is_stay_event = ifelse(is.na(stayeventgroup) == FALSE, 1, 0))%>%
+  mutate(is_stay_event = ifelse(is.na(stayeventgroup) == FALSE, 1, 0),
+         likely_active = ifelse(datetime < expiration_date, 1, 0))%>%
   group_by(filename, trade_name, address_full, account) %>% 
   summarise(n_exposures = n(),
-            n_stay_event_exposures = sum(is_stay_event, na.rm = FALSE))
+            n_stay_event_exposures = sum(is_stay_event, na.rm = FALSE),
+            n_exposures_likely_active = sum(likely_active), na.rm = FALSE) %>%
+  mutate(possible_false_positive = n_exposures - n_exposures_likely_active) %>%
+  select(-n_exposures_likely_active, -na.rm)
