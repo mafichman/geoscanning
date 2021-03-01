@@ -1,6 +1,6 @@
 # Abbreviated Code Base For Cleaning Geo-Data
-# Michael Fichman / Falk Lab / Geoscanning
-# 1 / 8/ 2021
+# Michael Fichman & Brad Mattan / Falk Lab / Geoscanning
+# 3 / 1/ 2021
 
 # Load and clean geotracking data
 # Apply space-time functions and NYU stay events
