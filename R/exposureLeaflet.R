@@ -24,8 +24,8 @@ exposureLeaflet <- function(dataSet){
            likely_active_exposure = ifelse(datetime < expiration_date, 1, 0)) %>%
     rbind(., dataSet %>%
             filter(is.na(trade_name)== TRUE) %>%
-    mutate(is_stay_event = 0,
-           likely_active_exposure = NA))
+    mutate(is_stay_event = ifelse(is.na(stayeventgroup) == FALSE, 1, 0),
+           likely_active_exposure = 0))
 
   
   l <- leaflet() %>% 
@@ -45,8 +45,8 @@ exposureLeaflet <- function(dataSet){
         addCircleMarkers(data=dataSet.df2[[df]],
                          lng=~lon, 
                          lat=~lat,
-                         radius = ~ifelse(is_stay_event == 1, 6, 10), 
-                         fillOpacity =~ 1,
+                         radius = ~ifelse(is_stay_event == 1, 8, 3), 
+                         fillOpacity =~ .5,
                          color =~pal(likely_active_exposure),
                          label=~paste("datetime:", datetime, ", Active (0/1)", likely_active_exposure, trade_name ),
                          group = df)

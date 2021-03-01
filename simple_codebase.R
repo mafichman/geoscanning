@@ -83,9 +83,13 @@ cleanData <- uploadGeodata("Data/Geotracking/multi_json_test") %>%
 # BM: If you're working with more than 10,000 observations, downsample to ~10,000 before plotting.
 
 geotrackingLeaflet(cleanData %>% 
-                     filter(filename == "file1") %>% # option to select subject(s) in advance
+                     filter(filename == "file1.json") %>% # option to select subject(s) in advance
                      sample_n(., 10000), 
                    stayEvents = FALSE)
+
+# exposureLeaflet visualizes geotracking observations by stay event (size)
+# and by exposures under 30mph (color)
+exposureLeaflet(cleanData_Retailers_Tracts)
 
 #######
 
