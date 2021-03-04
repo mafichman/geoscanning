@@ -36,6 +36,7 @@ source("R/geotrackingLeaflet.R")
 source("R/retailersLeaflet.R")
 source("R/intakeSummary.R")
 source("R/graphicsFunctions.R")
+source("R/exposureLeaflet.R")
 
 # Upload data and add space/time indicators
 # Specify the following parameters:
