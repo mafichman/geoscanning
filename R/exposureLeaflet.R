@@ -14,6 +14,7 @@ exposureLeaflet <- function(dataSet){
   
   dataSet.df <- dataSet %>% 
     as.data.frame() %>% ungroup() %>%
+    mutate(filename = as.factor(filename)) %>% #BM: I added this because it appears to be necessary for split() in line 35.
     filter(is.na(trade_name)== FALSE & lead_lag_avg_mph < 30) %>% 
     group_by(filename, lat, lon, datetime) %>% 
     slice(1) %>% 
@@ -30,8 +31,8 @@ exposureLeaflet <- function(dataSet){
     addProviderTiles(providers$Esri.WorldTopoMap) %>%
     setView(lng = mean(dataSet$lon, na.rm = TRUE), mean(dataSet$lat, na.rm = TRUE), zoom = 07) %>%
     addScaleBar(position = "topleft")
-  
-  dataSet.df2 = split(dataSet.df %>% as.data.frame(), dataSet.df$filename) #BM: this is causing problems if you have a lot of ppts
+  #BM: The first argument below generates a df with 2 observations of 84 variables. Attempting to use View on that df froze my RStudio.
+  dataSet.df2 = split(dataSet.df %>% as.data.frame(), dataSet.df$filename)
 
   
   names(dataSet.df2) %>%
