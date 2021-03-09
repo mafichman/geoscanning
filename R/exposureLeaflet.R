@@ -33,7 +33,7 @@ exposureLeaflet <- function(dataSet){
     setView(lng = mean(dataSet$lon, na.rm = TRUE), mean(dataSet$lat, na.rm = TRUE), zoom = 07) %>%
     addScaleBar(position = "topleft")
   
-  dataSet.df2 = split(dataSet.df %>% as.data.frame(), dataSet.df$filename)
+  dataSet.df2 = split(dataSet.df %>% as.data.frame(), dataSet.df$filename) #BM: this is causing problems if you have a lot of ppts
 
   
   names(dataSet.df2) %>%
