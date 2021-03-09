@@ -4,8 +4,6 @@
 # With stay events visualized by size and exposures in red
 # Parameters - dataSet
 # dataSet needs to have gone through retailer spatial join
-# If stayEvents is TRUE, the map outputs stay events
-# otherwise it shows all geotracking observations
 
 exposureLeaflet <- function(dataSet){
   

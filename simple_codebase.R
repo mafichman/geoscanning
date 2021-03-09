@@ -88,10 +88,6 @@ geotrackingLeaflet(cleanData %>%
                      sample_n(., 10000), 
                    stayEvents = FALSE)
 
-# exposureLeaflet visualizes geotracking observations by stay event (size)
-# and by exposures under 30mph (color)
-exposureLeaflet(cleanData_Retailers_Tracts)
-
 #######
 
 # Output workspace, shp, csv
@@ -127,6 +123,10 @@ retailersLeaflet(retailers)
 cleanData_Retailers_Tracts <- cleanData %>%
   bufferAndJoin(retailers, ., 2272, 100) %>%
   joinTracts(.)
+
+# exposureLeaflet visualizes geotracking observations by stay event (size)
+# and by exposures under 30mph (color)
+exposureLeaflet(cleanData_Retailers_Tracts)
 
 # Output workspace, shp, csv
 
