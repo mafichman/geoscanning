@@ -1,5 +1,7 @@
 # removeDuplicates.R
 
+# INCOMPLETE PENDING COMMENTS FROM TOM
+
 # This function removes duplicated timestamps using a logic
 # which tries to determine which duplicate is most likely to be an outlier based
 # on time/space lag readings
