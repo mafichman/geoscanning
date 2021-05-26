@@ -131,8 +131,8 @@ geocoded_pa_fixed <- geocoded_pa %>%
          lon = ifelse(account == "09**0009", -74.83672149886412,  lon)) %>%
   mutate(lat = ifelse(account == "40**3538", 41.33283809763932,  lat),
          lon = ifelse(account == "40**3538", -75.95459226289694,  lon)) %>%
-  mutate(lat = ifelse(account == "09**2991", 41.33283809763932,  lat),
-         lon = ifelse(account == "09**2991", -75.95459226289694,  lon))
+  mutate(lat = ifelse(account == "09**2991", 40.10934146246511,   lat),
+         lon = ifelse(account == "09**2991", -74.95117508837193,  lon))
 
 # Append to the rest of the retailers and write it out
 
@@ -143,6 +143,6 @@ allStates_updated <- read.csv("~/GitHub/geoscanning/Data/Retailers/all_Retailers
   mutate(expiration_date = ymd(expiration_date),
          publish_date = ymd(publish_date)) %>%
   filter(state != "PA") %>%
-  rbind(., geocoded_pafixed)
+  rbind(., geocoded_pa_fixed)
 
 write.csv(allStates_updated, "~/GitHub/geoscanning/Data/Retailers/all_Retailers_5_26_21.csv")
