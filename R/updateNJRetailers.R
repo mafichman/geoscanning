@@ -1,4 +1,4 @@
-# Update PA Retailers Only
+# Update NJ Retailers Only
 
 # Code is fully documented in markdown entitled clean_retailers_v3.Rmd / clean_retailers_v3.html
 
