@@ -78,3 +78,73 @@ stored_de <- read.csv("~/GitHub/geoscanning/Data/Retailers/all_Retailers_5_26_21
   mutate(expiration_date = ymd(expiration_date),
          publish_date = ymd(publish_date)) %>%
   filter(state == "DE")
+
+# Join new and stored data
+
+joined_de <- full_join(stored_de, 
+                       retailers_Socrata_de, by = c("account", "trade_name")) %>%
+  mutate(expired_y_n = ifelse(is.na(expiration_date.y) == TRUE, "EXPIRED", "ACTIVE"),
+         expiration_date = if_else(expired_y_n == 'EXPIRED', expiration_date.x, ymd(expiration_date.y)),
+         lat = ifelse(is.na(lat.x) == FALSE, lat.x, lat.y),
+         lon = ifelse(is.na(lon.x) == FALSE, lon.x, lon.y),
+         address_full = ifelse(is.na(address_full.x) == FALSE, address_full.x, address_full.y),
+         county = ifelse(is.na(county.y) == TRUE, county.x, county.y),
+         publish_date = if_else(is.na(publish_date.y) == TRUE, publish_date.x, publish_date.y),
+         license_type = ifelse(is.na(license_type.y) == TRUE, license_type.x, license_type.y),
+         state = "DE") %>%
+  dplyr::select(-lat.x, -lon.x, -lat.y, -lon.y, 
+                -address_full.x, -address_full.y, -county.x, -county.y, -expired_y_n.x, -expired_y_n.y,
+                -publish_date.x, -publish_date.y, -state.x, -state.y, -license_type.x, -license_type.y,
+                -expiration_date.x, -expiration_date.y)
+
+# Geocode missing info
+
+to_geocode_de <- joined_de %>%
+  filter(is.na(lat) == TRUE)
+
+geocoded_de <- geocode(to_geocode_de$address_full, source =  "google") %>%
+  cbind(., to_geocode_de %>%
+          select(-lat, -lon)) %>%
+  rbind(joined_de %>%
+          filter(is.na(lat) == FALSE), .)
+
+summary(is.na(geocoded_de$lat))
+
+# There are no NA observations, so we do this
+geocoded_de <- joined_de
+
+# Check for bad geocodes
+
+errors_de <- st_join(geocoded_de %>% 
+                       filter(is.na(lat) == FALSE) %>% 
+                       st_as_sf(., coords = c("lon", "lat"), crs = 4326), 
+                     de_shp, 
+                     join = st_within, 
+                     left = TRUE) %>%
+  filter(is.na(STUSPS) == TRUE) %>%
+  mutate(lon=map_dbl(geometry, ~st_centroid(.x)[[1]]),
+         lat=map_dbl(geometry, ~st_centroid(.x)[[2]]))%>%
+  dplyr::select(canonical_names) %>%
+  as.data.frame() %>%
+  dplyr::select(-geometry) %>%
+  rbind(., geocoded_de %>%
+          filter(is.na(lat) == TRUE))
+
+# Manually fix bad geocodes
+
+geocoded_de_fixed <- geocoded_de %>%
+  mutate(lat = ifelse(account == "2005208433", 39.64222847614057, lat),
+         lon = ifelse(account == "2005208433", -75.64473202156881, lon))
+
+# Put all the data back together
+
+allStates_updated <- read.csv("~/GitHub/geoscanning/Data/Retailers/all_Retailers_5_26_21.csv") %>%
+  dplyr::select(canonical_names) %>%
+  mutate_if(is.factor, as.character) %>%
+  mutate(account = as.character(account)) %>%
+  mutate(expiration_date = ymd(expiration_date),
+         publish_date = ymd(publish_date)) %>%
+  filter(state != "DE") %>%
+  rbind(., geocoded_de_fixed)
+
+write.csv(allStates_updated, "~/GitHub/geoscanning/Data/Retailers/all_Retailers_5_26_21.csv")
