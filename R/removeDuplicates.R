@@ -6,7 +6,12 @@
 # which tries to determine which duplicate is most likely to be an outlier based
 # on time/space lag readings
 
-# requirements - sf, tidyverse, lubridate
+# requirements - sf, tidyverse, lubridate, RcppRoll
+
+library(sf)
+library(tidyverse)
+library(lubridate)
+library(RcppRoll)
 
 # Testing this out - uploading the clean test data set
 cleanData <- uploadGeodata("Data/Geotracking/multi_json_test") %>%
@@ -24,34 +29,39 @@ cleanData <- cleanData %>%
   mutate(random = runif(nrow(cleanData), min = 0, max = 40),
          datetime = ifelse(random > 38, lead(datetime), datetime),
          datetime = as.POSIXct(as.numeric(datetime), # go from unix time to POSIXct date time
-                               origin = "1970-01-01"))
+                               origin = "1970-01-01")) %>%
+  select(-random)
 
 nrow(cleanData) == length(unique(cleanData$datetime))
 
-# create a variable for myCRS - this will go in the function
+# Create rolling averages for lat and lon
+# let's just do this for n = 3 to start but this can be altered
+# THis is done grouping by filename and ordering by timestamp
+# Then let's calculate the distance between the actual lat/lon
+# and the rolling lat/lon (e.g. center of mass) - this is the second mutate command
+# We call this dist_ctrGravity.
+# Then we group by filename and datetime (e.g. each id/timestamp combo),
+# We rank them by dist_ctrGravity (smallest first)
+# And keep only the first obs (e.g. slice(1))
+# We then ungroup and ditch the new variables we made
 
-myCRS <- 2272
+# THis is only being done for the lag observations, not the lead
+# I suspect the effect is the same as if we used the lead though.
 
-# Calculate lag distance, group by file and timestamp and then arrange
-# in ascending order of lag distance
-# keep only the first observation
-# then ungroup
+# This should work even if the timestamps and lat/lon are identical because it throws out all
+# but the first filename/timestamp pair if they are ordered.
 
-# THIS DOESN'T QUITE WORK BECAUSE THE LAGS ARE CREATED USING THE DUPLICATES
-
-test <- cleanData %>%
-  filter(is.na(lat) == FALSE & is.na(lon) == FALSE) %>%
-  st_as_sf(., coords = c("lon", "lat"), crs = 4326, remove = FALSE) %>%
-  ungroup() %>%
-  st_transform(crs = myCRS) %>%
-  mutate(y_ft=map_dbl(geometry, ~st_centroid(.x)[[1]]),
-         x_ft=map_dbl(geometry, ~st_centroid(.x)[[2]])) %>%
-  group_by(filename)%>%
+cleanData %>% 
+  group_by(filename) %>%
   arrange(datetime)%>%
-  mutate(lagDist_ft = sqrt(((lag(x_ft) - x_ft)^2) + ((lag(y_ft) - y_ft)^2))) %>%
+  mutate(roll3lat = roll_mean(lat, n = 3, align = "right", fill = NA), 
+         roll3lon = roll_mean(lon, n = 3, align = "right", fill = NA)) %>%
+  mutate(dist_ctrGravity = sqrt(((roll3lon - lon)^2) + ((roll3lat - lat)^2))) %>%
   group_by(filename, datetime) %>%
-  arrange(lagDist_ft) %>%
+  arrange(dist_ctrGravity) %>%
   slice(1) %>%
   ungroup() %>%
-  dplyr::select(-c(x_ft, y_ft, lagDist_ft)) %>%
+  dplyr::select(-c(roll3lon, roll3lat, dist_ctrGravity)) %>%
   ungroup()
+
+# Next this has to be turned into a function, error checked, etc.,
