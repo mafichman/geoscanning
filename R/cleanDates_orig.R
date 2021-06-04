@@ -1,7 +1,6 @@
 # cleanDates.R
 
-# Clean Dates to remove geodata outside study start/end dates. 
-# The function also flags observations during specified intervals (e.g., between track 1 and track 2).
+# Clean Dates to remove geodata outside study range and then add time window metrics for later diagnostics
 
 # Takes outputs from function uploadGeodata
 
@@ -12,7 +11,7 @@
 # fileName - a name for the the json file for the subject in question e.g. "file1.json" - found in the column filename of the output from uploadGeodata
 
 
-cleanDates <- function(df, dateRangeMin, dateRangeMax, addFlags, fileName){
+cleanDates <- function(df, dateRangeMin, dateRangeMax, fileName){
 
   require(tidyverse)
   require(lubridate)
@@ -20,8 +19,7 @@ cleanDates <- function(df, dateRangeMin, dateRangeMax, addFlags, fileName){
   cleaned.df <- df %>%
     mutate(keep = case_when(filename == fileName & 
                             datetime > dateRangeMin & 
-                            datetime < dateRangeMax ~ 1),
-           flag = case_when(filename == fileName ~ 1)) %>%
+                            datetime < dateRangeMax ~ 1)) %>%
     filter((is.na(keep) == FALSE & filename == fileName) | filename != fileName) %>%
     mutate(interval60 = floor_date(ymd_hms(datetime), unit = "hour"),
            interval30 = floor_date(ymd_hms(datetime), unit = "30 mins"),
@@ -33,14 +31,6 @@ cleanDates <- function(df, dateRangeMin, dateRangeMax, addFlags, fileName){
     mutate(week = week - min(week) + 1) %>%
     ungroup() %>%
     dplyr::select(-keep)
-  
-  if (addFlags==TRUE) {
-    start <- unique(df$end1[df$filename==fileName])
-    end <- unique(df$start2[df$filename==fileName])
-    cleaned.df <- cleaned.df %>%
-      mutate(flag = case_when(filename == fileName &
-                              datetime %within% (start %--% end) ~ 1)) #double check this
-  }
   
   return(cleaned.df)
     

@@ -22,6 +22,7 @@ require(sf)
 require(tidyverse)
 require(lubridate)
 require(RcppRoll)
+require(stats)
 
 dataframe <- dataframe %>% 
   group_by(filename) %>%
@@ -30,15 +31,17 @@ dataframe <- dataframe %>%
          rollsdlon = roll_sd(lon, n = 2, align = "right", fill = 99),
          rollsdtime = roll_sd(datetime, n = 2, align = "right", fill = 99),
          duplicate = ((rollsdlat + rollsdlon + rollsdtime) == 0),
-         tsDupsExact = sum(duplicate), # number of exact duplicate timestamps by participant
+         tsDupsExact = sum(duplicate),               # number of exact duplicate timestamps by participant
          tsDupsSplit = n() - tsDupsExact) %>%        # placeholder for number of duplicate timestamps with split coordinates
   filter(duplicate == FALSE) %>% 
   mutate(rollLagLat = roll_mean(lat, n = 3, align = "right", fill = NA), 
          rollLagLon = roll_mean(lon, n = 3, align = "right", fill = NA),
-         rollLeadLat = roll_mean(lat, n = 3, align = "left", fill = NA), 
-         rollLeadLon = roll_mean(lon, n = 3, align = "left", fill = NA),
-         rollAvgLat = mean(c(rollLagLat, rollLeadLat), na.rm = TRUE),
-         rollAvgLon = mean(c(rollLeadLat, rollLeadLon), na.rm = TRUE),
+         rollLeadLat = roll_mean(lat, n = 3, align = "left", fill = NA, weights = c(0,1,1)), 
+         rollLeadLon = roll_mean(lon, n = 3, align = "left", fill = NA, weights = c(0,1,1))) %>%
+  ungroup() %>%
+  rowwise() %>%
+  mutate(rollAvgLat = weighted.mean(c(rollLagLat, rollLeadLat), c(.6,.4), na.rm = TRUE),
+         rollAvgLon = weighted.mean(c(rollLagLon, rollLeadLon), c(.6,.4), na.rm = TRUE),
          dist_ctrGravity = sqrt(((rollAvgLon - lon)^2) + ((rollAvgLat - lat)^2))) %>%
   group_by(filename, datetime) %>%
   arrange(dist_ctrGravity) %>%
@@ -46,13 +49,13 @@ dataframe <- dataframe %>%
   ungroup() %>%
   group_by(filename) %>%
   mutate(tsDupsSplit = tsDupsSplit - n()) %>% # update number for duplicate timestamps with split coordinates
-  dplyr::select(-c(rollsdlat, 
-                   rollsdlon, 
-                   rollsdtime, 
-                   duplicate, 
-                   rollLagLat, 
+  dplyr::select(-c(rollsdlat,
+                   rollsdlon,
+                   rollsdtime,
+                   duplicate,
+                   rollLagLat,
                    rollLagLon,
-                   rollLeadLat, 
+                   rollLeadLat,
                    rollLeadLon,
                    rollAvgLat,
                    rollAvgLon)) %>%
