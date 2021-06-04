@@ -9,8 +9,8 @@
 # df - a dataframe output from uploadGeodata
 # dateRangeMin - a minimum bound (noninclusive) of the date range. format "yyyy-mm-dd hh:mm:ss" using a 24hr time for hour
 # dateRangeMax - a minimum bound (noninclusive) of the date range. format "yyyy-mm-dd hh:mm:ss" using a 24hr time for hour
+# addFlags - a boolean that determines whether it's necessary to flag observations outside of formal tracking periods
 # fileName - a name for the the json file for the subject in question e.g. "file1.json" - found in the column filename of the output from uploadGeodata
-
 
 cleanDates <- function(df, dateRangeMin, dateRangeMax, addFlags, fileName){
 
@@ -20,26 +20,17 @@ cleanDates <- function(df, dateRangeMin, dateRangeMax, addFlags, fileName){
   cleaned.df <- df %>%
     mutate(keep = case_when(filename == fileName & 
                             datetime > dateRangeMin & 
-                            datetime < dateRangeMax ~ 1),
-           flag = case_when(filename == fileName ~ 1)) %>%
+                            datetime < dateRangeMax ~ 1)) %>%
     filter((is.na(keep) == FALSE & filename == fileName) | filename != fileName) %>%
-    mutate(interval60 = floor_date(ymd_hms(datetime), unit = "hour"),
-           interval30 = floor_date(ymd_hms(datetime), unit = "30 mins"),
-           week = week(interval60),
-           dotw = wday(interval60, label=TRUE),
-           weekend = ifelse(dotw %in% c("Sun","Sat"), "Weekend", "Weekday"),
-           hour = as.numeric(format(interval60, "%H"))) %>%
-    group_by(filename) %>%
-    mutate(week = week - min(week) + 1) %>%
-    ungroup() %>%
     dplyr::select(-keep)
   
   if (addFlags==TRUE) {
     start <- unique(df$end1[df$filename==fileName])
     end <- unique(df$start2[df$filename==fileName])
     cleaned.df <- cleaned.df %>%
-      mutate(flag = case_when(filename == fileName &
-                              datetime %within% (start %--% end) ~ 1)) #double check this
+      mutate(period_flag = case_when(filename == fileName &
+                                     datetime %within% (start %--% end) ~ 0,
+                                     TRUE ~ as.numeric(period_flag)))
   }
   
   return(cleaned.df)
