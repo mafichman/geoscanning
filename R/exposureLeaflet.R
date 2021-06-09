@@ -12,7 +12,7 @@ exposureLeaflet <- function(dataSet, mph_thresh){
   require(leaflet)
   require(leaflet.providers)
   require(leaflet.extras)
-  dataSet <- cleanData_Retailers_Tracts %>% 
+  dataSet <- dataSet %>% 
     as.data.frame() %>% ungroup() %>%
     mutate(filename = as.factor(filename)) #BM: I added this because it appears to be necessary for split() in line 35.
   dataSet.df <- dataSet %>% 
