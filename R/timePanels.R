@@ -1,7 +1,32 @@
+#timePanels.R
 
+# Generates the following sets of time panels binned by participant, day, and hour. 
+# (1) Frequency of geolocation observations (points plots)
+# (2) Frequency of geolocation observations (heatmaps for count and z)
+# (3) Average lag distance of geolocation observations (heatmaps for raw value and z)
+# (4) Average lag time of geolocation obserations (heatmaps for raw value and z)
+# (5) Average lag mph of geolocation observations (heatmaps for raw value and z)
+# (6) Average radius of gyration for geolocation observations (heatmaps for raw value and z)
 
+# Inputs
+# (1) df.raw: raw dataframe after removing duplicate timestamps using removeDuplicates.R and running timeWindows.R
+# (2) df.cleaned: cleaned dataframe after adding space-time metrics and trimming extreme outliers
+# (3) time: timestamp to be appended on data file outputs
+# (4) plotpath: path to where plots will be saved
+# (5) tablespath: path to where tabular data will be saved
+
+# Outputs
+# (1) returns plots object which is required for printing a pdf in the main script
+# (2) saves plots in plotspath as an .RData file which can be dynamically visualized using the time panels shiny app 
+# (3) saves tabular data used to generate the plots as a .csv in tablespath
+
+# Time Panels Shiny App
+# For the pilot data, this is found at /Volumes/cnlab/GeoScan/Pilot_Analyses/Figures/QC/shiny_qc_review_060921.R
 
 timePanels <- function(df.raw, df.cleaned, time, plotpath, tablespath){
+  
+  require(tidyverse)
+  require(ggpubr)
   
   ## DATA TABLES
 
