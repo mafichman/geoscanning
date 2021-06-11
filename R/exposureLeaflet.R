@@ -22,7 +22,7 @@ exposureLeaflet <- function(dataSet, mph_thresh){
     as.data.frame() %>% ungroup() %>%
     mutate(filename = as.factor(filename))
   dataSet.df <- dataSet %>% 
-    filter(is.na(trade_name) == FALSE & lead_lag_avg_mph < mph_thresh) %>% 
+    filter(is.na(trade_name) == FALSE & lagmph < mph_thresh) %>% 
     group_by(filename, lat, lon, datetime) %>% 
     slice(1) %>% 
     ungroup() %>% 
