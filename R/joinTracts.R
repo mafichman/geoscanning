@@ -6,12 +6,13 @@
 # Parameters
 
 # geotracking point data - an sf object
+# year - year for which tracts are requested
 # lat, lon - maybe need these if using a csv with lat/lon
 
 # Returns an sf object with tract GEOID
-# Defaults to 2010-2019 Tracts
+# Defaults to 2010-2019 Tracts if year is not specified
 
-joinTracts <- function(pointData){
+joinTracts <- function(pointData, year){
   
   require(tidyverse)
   require(tigris)
@@ -24,7 +25,7 @@ joinTracts <- function(pointData){
   
   # Load all states using tigris
   
-  allStates <- states()%>%
+  allStates <- states(year = year)%>%
     st_as_sf() %>%
     st_transform(crs=4326)
   
