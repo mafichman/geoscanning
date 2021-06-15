@@ -12,10 +12,10 @@
 
 intakeRetailers <- function(filepath){
   
-require(tidyverse)
+  require(tidyverse)
   require(sf)
   
-canonical_names <- c("county", "trade_name", "account", "license_type",
+  canonical_names <- c("county", "trade_name", "account", "license_type",
                        "expiration_date", "lat", "lon", "address_full",
                        "publish_date", "state", "expired_y_n")
   
@@ -26,18 +26,28 @@ canonical_names <- c("county", "trade_name", "account", "license_type",
     mutate(expiration_date = ymd(expiration_date),
            publish_date = ymd(publish_date))
   
-ifelse(names(retailers) != canonical_names, 
+  ifelse(names(retailers) != canonical_names, 
        print("WARNING: Column names are non-standard"), 
        print("Column names match standard names"))
+  
+  cat("\nData contain\n")
 
-print("Data contain")
+  retailers %>%
+    filter(is.na(lat) == TRUE) %>%
+    nrow() %>%
+    print(.)
 
-retailers %>%
-  filter(is.na(lat) == TRUE) %>%
-  nrow() %>%
-  print(.)
-
-print("NA geodata observations")
+  print("NA geodata observations")
+  
+  retailers <- retailers %>% 
+    mutate(license_loc_twin = duplicated(paste(lat, lon)))
+  
+  retailers %>%
+    filter(license_loc_twin == TRUE) %>%
+    nrow() %>%
+    print(.)
+  
+  print("duplicated geodata observations")
   
   return(retailers)
   
