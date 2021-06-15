@@ -24,9 +24,15 @@ removeDuplicates <- function(dataframe){
   require(RcppRoll)
   require(stats)
   
+  # Check for poorly arranged data before computing rolling averages
+  sortdata <- dataframe %>% arrange(filename, datetime)
+  if (sum(dataframe$datetime!=sortdata$datetime)>0) {
+    message("Data were not sorted first by participant ID and then by date/time. removeDuplicates has now sorted the data accordingly.")
+    dataframe <- dataframe %>% arrange(filename, datetime)
+  }
+  
   dataframe <- dataframe %>% 
     group_by(filename) %>%
-    arrange(datetime) %>%
     mutate(rollsdlat = roll_sd(lat, n = 2, align = "right", fill = 99),
            rollsdlon = roll_sd(lon, n = 2, align = "right", fill = 99),
            rollsdtime = roll_sd(datetime, n = 2, align = "right", fill = 99),
@@ -60,13 +66,6 @@ removeDuplicates <- function(dataframe){
                      rollAvgLat,
                      rollAvgLon)) %>%
     ungroup()
-  
-  # Check for poorly arranged data before feeding into mobility package functions
-  sortdata <- dataframe %>% arrange(filename, datetime)
-  if (sum(dataframe$datetime!=sortdata$datetime)>0) {
-    message("Data were not sorted first by participant ID and then by date/time. removeDuplicates has now sorted the data accordingly.")
-    dataframe <- dataframe %>% arrange(filename, datetime)
-  }
 
 return(dataframe)
 }
