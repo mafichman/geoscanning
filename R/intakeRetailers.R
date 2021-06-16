@@ -40,14 +40,14 @@ intakeRetailers <- function(filepath){
   print("NA geodata observations")
   
   retailers <- retailers %>% 
-    mutate(license_loc_twin = duplicated(paste(lat, lon)))
+    mutate(license_loc_twin = (duplicated(paste(lat, lon)) & duplicated(expiration_date)))
   
   retailers %>%
     filter(license_loc_twin == TRUE) %>%
     nrow() %>%
     print(.)
   
-  print("duplicated geodata observations")
+  print("duplicated licenses with the same geolocation coordinates and expiration date")
   
   return(retailers)
   
