@@ -12,11 +12,12 @@ stayevent_nas <- function(df){
   
   require(tidyverse)
   
-  df <- df %>% ungroup() %>%
-    group_by(filename) %>%
+  df <- df %>%
     mutate(stayeventgroup = as.character(stayeventgroup))
   nadf <- df %>% filter(is.na(stayeventgroup)) %>%
-           mutate(stayeventgroup = paste("NA", seq(1,length(filename),1))) 
+           group_by(filename) %>%
+           mutate(stayeventgroup = paste("NA", seq(1,length(filename),1))) %>%
+           ungroup()
   df <- rbind(df %>% filter(!is.na(stayeventgroup)), nadf) %>% 
   arrange(filename, datetime)
 
