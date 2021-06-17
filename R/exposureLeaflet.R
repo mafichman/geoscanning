@@ -26,11 +26,11 @@ exposureLeaflet <- function(dataSet, mph_thresh){
     group_by(filename, lat, lon, datetime) %>% 
     slice(1) %>% 
     ungroup() %>% 
-    mutate(is_stay_event = ifelse(is.na(stayeventgroup) == FALSE, 1, 0),
+    mutate(is_stay_event = ifelse(grepl("NA", stayeventgroup) == FALSE, 1, 0),
            likely_active_exposure = ifelse(datetime < expiration_date, 1, 0)) %>%
     rbind(., dataSet %>%
             filter(is.na(trade_name)== TRUE) %>%
-            mutate(is_stay_event = ifelse(is.na(stayeventgroup) == FALSE, 1, 0),
+            mutate(is_stay_event = ifelse(grepl("NA", stayeventgroup) == FALSE, 1, 0),
                    likely_active_exposure = 0)) %>%
     group_by(filename) %>%
     slice_sample(prop = .05) %>% # For large datasets, trim down to a more workable number of observations.
