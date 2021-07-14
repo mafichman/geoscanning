@@ -143,7 +143,7 @@ register_google(key = "YOUR API KEY GOES HERE")
 ```
 
 ```{r register_key2, eval=TRUE, cache=TRUE, include=FALSE}
-register_google(key = "AIzaSyDGhyb11VDr6nuakmilEF4BmmNY_AmhKrw")
+register_google(key = "")
 ```
 
 ## 2.3. Create Canonical Names
