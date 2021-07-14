@@ -1,0 +1,1535 @@
+---
+title: "Final GeoScan Pilot Analysis Preparation"
+author: "Bradley D. Mattan"
+date: "6/16/2021"
+output: html_document
+---
+
+This script is based on Michael Fichman's Codebases.
+~/Box Sync/GeoScanning_Data_822815/Data/R Markdown/GeoScanning_CodeBase_12_9_19.html
+https://github.com/mafichman/geoscanning/blob/main/simple_codebase.R
+
+## Loading Packages and Functions
+
+IMPORTANT: Make sure to load all packages and functions even if you're loading an .RData file later in this script.
+
+The sf (or simple features) package is the most robust vector-based GIS package in R. It handles geojson, shapefiles and other major spatial data types and performs projection, geoprocessing and other functions within the tidyverse data wrangling framework. Most of the normal operations that can be performed on a dataframe can be performed on an sf object. The only major difference between a dataframe and an sf object is that an sf object has a geometry column which prescribes its geometry, be it point, line or ploygon.
+
+```{r}
+# Packages
+
+library(tidyverse)
+library(sf)
+library(tigris)
+library(tidycensus)
+library(viridis)
+library(lubridate)
+library(mapview)
+library(ggmap)
+library(jsonlite)
+library(RSocrata)
+library(lme4)
+library(lmerTest)
+library(jtools)
+library(interactions)
+library(leaflet)
+library(leaflet.providers)
+library(leaflet.extras)
+library(mediation)
+library(boot)
+library(gridExtra)
+library(ggpubr)
+library(anomalize)
+library(tibbletime)
+library(RcppRoll)
+library(cdlTools)
+
+library(devtools)
+devtools::install_github("nyu-mhealth/Mobility") # repo was forked by Michael just in case it goes dark in the future
+library(Mobility)
+
+# Functions - share with Christin and Nicole
+
+source("~/Dropbox/geoscanning/R/uploadGeodata.R")
+source("~/Dropbox/geoscanning/R/cleanDates.R")
+source("~/Dropbox/geoscanning/R/spaceTimeLags.R")
+source("~/Dropbox/geoscanning/R/intakeRetailers.R")
+source("~/Dropbox/geoscanning/R/bufferAndJoin.R")
+source("~/Dropbox/geoscanning/R/joinTracts.R")
+source("~/Dropbox/geoscanning/R/indirectMLM.R")
+source("~/Dropbox/geoscanning/R/geotrackingLeaflet.R")
+source("~/Dropbox/geoscanning/R/retailersLeaflet.R")
+source("~/Dropbox/geoscanning/R/intakeSummary.R")
+source("~/Dropbox/geoscanning/R/graphicsFunctions.R")
+source("~/Dropbox/geoscanning/R/exposureLeaflet.R")
+source("~/Dropbox/geoscanning/R/removeDuplicates.R")
+source("~/Dropbox/geoscanning/R/addTimeWindows.R")
+source("~/Dropbox/geoscanning/R/timePanels.R")
+source("~/Dropbox/geoscanning/R/stayevent_nas.R")
+
+# https://www.amazon.com/Public-Policy-Analytics-Context-Government/dp/036751625X 
+q5 <- function(variable) {as.factor(ntile(variable, 5))}
+qBr <- function(df, variable, rnd) {
+  if (missing(rnd)) {
+    as.character(quantile(round(df[[variable]],0),
+                          c(.01,.2,.4,.6,.8), na.rm=T))
+  } else if (rnd == FALSE | rnd == F) {
+    as.character(formatC(quantile(df[[variable]]), digits = 3),
+                 c(.01,.2,.4,.6,.8), na.rm=T)
+  }
+}
+
+getmode <- function(v) {
+   uniqv <- na.omit(unique(v))
+   uniqv[which.max(tabulate(match(v, uniqv)))]
+}
+
+vif.mer <- function (fit) {
+  ## adapted from rms::vif
+  
+  v <- vcov(fit)
+  nam <- names(fixef(fit))
+  
+  ## exclude intercepts
+  ns <- sum(1 * (nam == "Intercept" | nam == "(Intercept)"))
+  if (ns > 0) {
+    v <- v[-(1:ns), -(1:ns), drop = FALSE]
+    nam <- nam[-(1:ns)]
+  }
+  
+  d <- diag(v)^0.5
+  v <- diag(solve(v/(d %o% d)))
+  names(v) <- nam
+  v
+}
+
+figsize <- function(width, heigth){
+     options(repr.plot.width = width, repr.plot.height = heigth)
+}
+```
+
+## Setting Themes
+
+For making html markdowns with scrollbar so that the figures can be large within a markdown (lines 20-21). See Michael's codebase from 9-17-20.
+
+```{r}
+plotTheme <- theme(
+  plot.title =element_text(size=12),
+  plot.subtitle = element_text(size=8),
+  plot.caption = element_text(size = 6),
+  axis.text.x = element_text(size = 10, angle = 45, hjust = 1),
+  axis.text.y = element_text(size = 10),
+  axis.title.y = element_text(size = 10),
+  # Set the entire chart region to blank
+  panel.background=element_blank(),
+  plot.background=element_blank(),
+  # Format the grid
+  panel.grid.major=element_line(colour="#D0D0D0",size=.75),
+  axis.ticks=element_blank())
+
+mapTheme <- theme(plot.title =element_text(size=12),
+                  plot.subtitle = element_text(size=8),
+                  plot.caption = element_text(size = 6),
+                  axis.line=element_blank(),
+                  axis.text.x=element_blank(),
+                  axis.text.y=element_blank(),
+                  axis.ticks=element_blank(),
+                  axis.title.x=element_blank(),
+                  axis.title.y=element_blank(),
+                  panel.background=element_blank(),
+                  panel.border=element_blank(),
+                  panel.grid.major=element_line(colour = 'transparent'),
+                  panel.grid.minor=element_blank(),
+                  legend.direction = "vertical", 
+                  legend.position = "right",
+                  plot.margin = margin(1, 1, 1, 1, 'cm'),
+                  legend.key.height = unit(1, "cm"), legend.key.width = unit(0.2, "cm"))
+
+palette <- c("#10142A", "#47E9B9", "#F55D60", "#71EA48", "#C148EA", "EAC148" )
+```
+
+## Install Census API Key
+
+For spatial joins of geotracking information to census geographies (and census demographic data), one can use the tidycensus package, but only with a key or token from the US Census Bureau.
+
+
+```{r}
+census_api_key("", overwrite = TRUE)
+```
+
+## Set Working Directory and Load Data
+
+Load final merged dataframe that was generated by ~/Box Sync/GeoScanning_Data_822815/Data/Scripts/Merge_AllEMA_Location_29.9.20.Rmd
+
+Note that the data merge script above could probably use a revamping from someone who's more tidyverse-savvy than I was in 2020. Also, there are issues with the generation of random bins (rbins) in that script that render them unusable for analysis. So if you want to look at a finer temporal resolution than a coverage bin, you will definitely need to go back and update the EMA merge script.
+
+Make sure that your connection to the VPN doesn't break when loading the data. You might end up with a partial data file. It should have 1,480,879 rows when fully loaded.
+
+``` {r}
+setwd("/Volumes/cnlab/GeoScan/Pilot_Analyses/Data/") # ASC server
+myData <- read.csv("all_ema_geo_data_081020.csv", stringsAsFactors = FALSE)
+glimpse(myData)
+```
+
+## Loading, Data Trimming, and Computation of Basic Data Quality Metrics
+
+Note that this next block can take about 30 minutes to run.
+
+We begin by taking our myData data frame, filtering out observations that are bad or outside the study period. 
+
+Next, we flag for later any observations that fall outside of a formal tracking period (i.e., track 1, track 2). Also useful for later plotting of time panels, we assign temporal windows to each geolocation observation.
+
+Prior to computing spatiotemporal metrics (see below), we remove any duplicate timestamps using removeDuplicates.R.
+
+We then identify stay events and hourly radius of gyration using the Mobility package from NYU. Hourly radius of gyration (rg_hr) is defined by the standard deviation between locations and their center of mass within one hour (in meters).
+
+We then use the spaceTimeLags function to estimate metrics that will later be used to identify anomalous geolocation data (e.g., when computing exposure to retailers, which requires greater precision). As part of this process, the dataframe is converted to a point sf object, characterized by the geographic (e.g. unprojected) coordinate system WGS84 aka “web mercator” (crs = 4326). WGS84 uses lat/lon decimal degrees, and any geoprocessing that you do which requires linear units of distance (feet, meters etc.,) will require projection first. There are projected coordinate systems for Southeastern PA and its environs used by government geographic agencies, the most common being North American Datum 1983 (NAD83), PA State Plane South, which has crs number 2272 and is projected in feet. The spaceTimeLags function uses st_transform to convert to NAD83.
+
+The variables we create are as follows:
+lagDist_ft
+latTime
+lagmph
+leadTime
+lead_lag_avg_mph
+mean_3_lagDist_ft
+
+Note for Future: We should try to ground truth different scenarios like being on a trolley.
+
+More information about projections and their reference numbers can be found at ‘spatialreference.org.’
+
+``` {r}
+print(paste("starting data processing at", Sys.time()))
+
+# Loading dates spreadsheet: Make sure that dates in the .csv file are saved in the right format: 2017-02-04 05:00:00
+# Careful! Opening the data file in Excel appears to affect the formatting.
+dates <- read.csv("~/Box Sync/GeoScanning_Data_822815/Data/GeoDates.csv", stringsAsFactors = FALSE)
+dates <- dates %>% mutate(start1 = as_datetime(start_utc),
+                          end1 = as_datetime(end_utc_pre_t2),
+                          start2 = as_datetime(start_utc_post_t2),
+                          end2 = as_datetime(end_utc),
+                          period_flag = NA)
+
+# Some basic housekeeping and data orientation, merging with study dates data
+studyData <- merge(myData %>% 
+                     filter(is.na(latitude) == FALSE & is.na(longitude) == FALSE) %>% 
+                     mutate_at("datetime", ~ymd_hms(.)), 
+                   dates, 
+                   by="pID", 
+                   all.x=TRUE) %>% 
+  rename(., filename = pID) %>%
+  mutate_at("datetime", ~ymd_hms(.)) %>%
+  arrange(filename, datetime) %>% # data should already be arranged in this fashion, but better to be safe than sorry
+  mutate(period_flag = 1) # set default assumption that observations are within formal tracking periods
+
+# Loop through participants for deeper data cleaning
+# (1) Remove bad geometries (0 observations)
+# (2) Remove data outside of study period (-7302 observations)
+# (3) Remove data from the end of GEO053's flight out of the country (-52133 observations)
+# (4) Flag 175127 remaining observations outside of formal tracking periods
+for (p in dates$pID) {
+  start <- as_datetime(dates$start_utc[dates$pID==p])
+  addflags <- !is.na(unique(dates$end1[dates$pID==p]))
+  if (p == "GEO053") {
+    end <- as_datetime("2017-08-05 12:00:00") # custom end time to exclude 52133 observations outside the country.
+  } else {end <- as_datetime(dates$end_utc[dates$pID==p])}
+  studyData <- cleanDates(studyData, start, end, addflags, p)
+}
+
+# Removing duplicate timestamps and adding spatiotemporal metrics
+# (1) Add time windows for subsequent generation of time panels in QC section
+# (2) Remove 4215 duplicate timestamps
+# (3) Compute stay events (and assign unique stayeventgroup IDs to NAs)
+# (4) Compute radius of gyration
+# (5) Convert to sf object and compute space-time lags
+# (6) Remove 622424 observations outside of EMA coverage bins (comment out if you are not interested in using EMA data)
+cleanData <- studyData %>%
+  addTimeWindows(.) %>%
+  rename(., lon = longitude, lat = latitude) %>%
+  removeDuplicates(.) %>%
+  stayevent(., 
+            coor = c("lon","lat"), 
+            time = "datetime", 
+            dist.threshold = 100/3.28084, # PARAMETER - conversion from 100 feet to meters
+            time.threshold = 5, # PARAMETER - stay event time threshold in units indicated on next line
+            time.units = "mins", 
+            groupvar = "filename") %>%
+  stayevent_nas(.) %>%
+  mutate(rg_hr = radiusofgyration(., 
+                                  coor = c("lon","lat"), 
+                                  time = "datetime", 
+                                  time.units = "hour",
+                                  groupvar = "filename")) %>%
+  spaceTimeLags(., 2272) %>% # PARAMETER CRS
+  filter(!is.na(covbin)) # eliminate data outside of coverage bins
+
+# BM: Warning message from NYU function. Michael has raised on issue on the NYU github repository.
+# `group_by_()` is deprecated as of dplyr 0.7.0.
+# Please use `group_by()` instead.
+# See vignette('programming') for more help
+
+# Useful table for looking at distribution of duplicate timestamps
+cleanData %>% as.data.frame() %>% group_by(filename, platform) %>%
+  summarize(exact = mean(tsDupsExact), split = mean(tsDupsSplit), obs_remaining = n())
+
+print(paste("finished data processing at", Sys.time()))
+```
+
+## Geolocation Outliers & Exclusions
+
+First, we generate summaries of sampling frequencies by platform for any written report. Then, we exclude extreme outliers (i.e., geolocation coordinates that are highly implausible).
+
+(1) Hourly Radius of Gyration: Dropping any coordinate where rg_hr > 160000 meters (i.e., faster than a car can drive; for more details, see Kirchner et al., 2019, Journal of Healthcare Informatics Research)
+(2) Lag Speed: Dropping any coordinate where lagmph > 600 mph (i.e., faster than the cruising speed of a jet).
+
+I’ve been doing some reading on Tom’s and others’ work, and it seems that no one really does any substantial quality control checking of geolocation data (or at least they don’t report doing it). Alessandretti in some work reports that errors didn’t exceed X number of meters, but it is unclear how this error was calculated. Kirchner and colleagues sometimes report geographical extent filters (e.g., US or DC polygon) and radius of gyration filters, but no filters to check for simultaneously measured tracks or implausible speeds. So I’ll go with my own a priori standards. If Tom thinks they should be changed, I can always do that later.
+
+Alessandretti, L., Aslak, U., & Lehmann, S. (2020). The scales of human mobility. Nature, 587(7834), 402-407.
+Kirchner, T. R., Gao, H., Lewis, D. J., Anesetti-Rothermel, A., Carlos, H. A., & House, B. (2019). Individual mobility and uncertain geographic context: Real-time versus neighborhood approximated exposure to retail tobacco outlets across the US. Journal of Healthcare Informatics Research, 3(1), 70-85.
+
+Here, I'm looking at movement parameters after first excluding extreme radii of gyration (and then speed outliers). 
+
+NB: Based on the preceding version of this script, dropping extreme radii of gyration really didn't appear to make much of a difference in the number of simultaneous samplings and speed outliers identified. However, it did eliminate the 210 distance outliers in the Mapmob data.
+
+June 2, 2021: 
+Nicole: now that we are also talking about other reasons to exclude data points, it could be helpful to be able to see that distinction (missing ema vs other quality issues)
+Brad: That could definitely be useful. I’m not sure how well that kind of thing would show up in a plot with y axis at the current scale. But maybe I could add a note to add plots of just exclusions in the future.
+
+```{r}
+# Summarizing extreme outliers/anomalies
+hist(tail(sort(cleanData$lagDist_ft),210), breaks=200, main="distribution of 210 extreme distance outliers")
+hist(cleanData$lagDist_ft, xlim=range(0,316800), ylim=range(0,150), breaks=1000, main="distribution of the remainder of distance observations")
+hist(cleanData$lagmph[cleanData$lagmph>600], breaks=1000, main="distribution of 4459 implausibly fast observations (lag mph faster than cruising speed of jets)")
+hist(cleanData$lagmph[cleanData$lagmph<600], breaks=1000, main="distribution of the remainder of lag mph observations")
+
+# Identifying and removing extreme outliers: resulting table shows that removing extreme radii of gyration takes care of distance outliers
+cleanData %>% data.frame() %>%
+  dplyr::select(lagDist_ft, lagmph, rg_hr, platform) %>%
+  mutate(rg_outlier = rg_hr >= 160000,
+         dist_outlier = lagDist_ft >= 316800,
+         speed_outlier = lagmph >= 600) %>%
+  group_by(platform, rg_outlier, dist_outlier, speed_outlier) %>%
+  dplyr::summarize(obs = n()) %>%
+  ungroup()
+trimmedData <- cleanData %>%
+  filter(rg_hr < 160000) %>% # exclude 4318 radii of gyration over 160 km
+  filter(lagmph < 600) # remove 3355 observations with implausible inferred speeds
+  # consider removing non-extreme time and distance outliers here
+
+# Generating histograms by geotracking app, averaging across all participants
+geo_m <- trimmedData %>% filter(platform=="mapmob") %>% 
+  dplyr::select(filename, rg_hr, lagmph, platform, lagDist_ft, lagTime, lagmph, lead_lag_avg_mph)
+geo_g <- trimmedData %>% filter(platform=="google") %>%
+  dplyr::select(filename, rg_hr, lagmph, platform, lagDist_ft, lagTime, lagmph, lead_lag_avg_mph)
+
+ggplot(geo_m %>% filter(lagDist_ft<(mean(lagDist_ft)+sd(lagDist_ft))), aes(x=lagDist_ft)) + 
+  geom_histogram(bins=100) + labs(title = "MapMob")
+ggplot(geo_g %>% filter(lagDist_ft<(mean(lagDist_ft)+sd(lagDist_ft))), aes(x=lagDist_ft)) + 
+  geom_histogram(bins=100) + labs(title = "Google")
+ggplot(geo_m %>% filter(lagTime<(mean(lagTime)+sd(lagTime))), aes(x=lagTime)) + 
+  geom_histogram(bins=100) + labs(title = "MapMob")
+ggplot(geo_g %>% filter(lagTime<(mean(lagTime)+sd(lagTime))), aes(x=lagTime)) + 
+  geom_histogram(bins=100) + labs(title = "Google")
+ggplot(geo_m %>% filter(lagmph<(mean(lagmph)+sd(lagmph))), aes(x=lagmph)) + 
+  geom_histogram(bins=100) + labs(title = "MapMob")
+ggplot(geo_g %>% filter(lagmph<(mean(lagmph)+sd(lagmph))), aes(x=lagmph)) + 
+  geom_histogram(bins=100) + labs(title = "Google")
+ggplot(geo_m %>% filter(!is.na(lead_lag_avg_mph) & !is.infinite(lead_lag_avg_mph)) %>%
+         filter(lead_lag_avg_mph<(mean(lead_lag_avg_mph)+sd(lead_lag_avg_mph))), aes(x=lead_lag_avg_mph)) + 
+  geom_histogram(bins=100) + labs(title = "MapMob")
+ggplot(geo_g %>% filter(!is.na(lead_lag_avg_mph) & !is.infinite(lead_lag_avg_mph)) %>%
+         filter(lead_lag_avg_mph<(mean(lead_lag_avg_mph)+sd(lead_lag_avg_mph))), aes(x=lead_lag_avg_mph)) + 
+  geom_histogram(bins=100) + labs(title = "Google")
+ggplot(geo_m %>% filter(rg_hr<(mean(rg_hr)+sd(rg_hr))), aes(x=rg_hr)) + 
+  geom_histogram(bins=100) + labs(title = "MapMob")
+ggplot(geo_g %>% filter(rg_hr<(mean(rg_hr)+sd(rg_hr))), aes(x=rg_hr)) + 
+  geom_histogram(bins=100) + labs(title = "Google")
+
+# Checking the sampling frequency for MapMob as described in the GeoScan grant
+cat("Mapmob allegedly samples every three minutes and after every 50 meters of movement. Is this true?\n")
+cat("What percent of the time does Mapmob sample every three minutes OR after every 50 meters of movement?\n")
+geo_m %>% mutate(ratetest = (lagDist_ft > 164 | as.numeric(lagTime) > 180)) %>%
+  dplyr::summarize(ratetest = sum(ratetest, na.rm=TRUE)/(length(ratetest)-sum(is.na(ratetest)))) %>%
+  as.double(.)*100
+cat("Given this low percentage, it seems the presumed sampling frequency of Mapmob is not correct.")
+
+# Data summaries averaged first by subject
+geodatbysubj <- trimmedData %>% data.frame() %>% 
+  group_by(filename) %>%
+  summarize(m_rg_hr = mean(rg_hr),
+            m_lagDist_ft = mean(lagDist_ft),
+            m_lagTime = mean(lagTime),
+            m_lagmph = mean(lagmph),
+            m_lead_lag_avg_mph = mean(lead_lag_avg_mph, na.rm=TRUE),
+            med_rg_hr = median(rg_hr),
+            med_lagDist_ft = median(lagDist_ft),
+            med_lagTime = median(lagTime),
+            med_lagmph = median(lagmph),
+            med_lead_lag_avg_mph = median(lead_lag_avg_mph, na.rm=TRUE),
+            sd_rg_hr = sd(rg_hr),
+            sd_lagDist_ft = sd(lagDist_ft),
+            sd_lagTime = sd(lagTime),
+            sd_lagmph = sd(lagmph),
+            sd_lead_lag_avg_mph = sd(lead_lag_avg_mph, na.rm=TRUE),
+            platform = getmode(platform))
+geodatbyplat <- geodatbysubj %>% group_by(platform) %>%
+  summarize(rg_summ = paste(round(mean(m_rg_hr),1), round(mean(med_rg_hr),1), round(mean(sd_rg_hr),1)),
+            dist_summ = paste(round(mean(m_lagDist_ft),1), round(mean(med_lagDist_ft),1), round(mean(sd_lagDist_ft),1)),
+            time_summ = paste(round(mean(m_lagTime),1), round(mean(med_lagTime),1), round(mean(sd_lagTime),1)),
+            mph_summ = paste(round(mean(m_lagmph),1), round(mean(med_lagmph),1), round(mean(sd_lagmph),1)),
+            llmph_summ = paste(round(mean(m_lead_lag_avg_mph),1), round(mean(med_lead_lag_avg_mph),1), round(mean(sd_lead_lag_avg_mph),1)))
+geodatbyplat
+```
+
+## Time Panels
+
+Next, we generate a visualization of geolocated observations by hour, day of the week, week of the study, and participant ID. Unprocessed geo observations are in black, and observations in the final dataset (restricted by EMA coverage bins) are in red.
+
+Tabular data are stored in bintable_raw and bintable_fin.
+Plots can be viewed by running timePanels and saving to an object called "plots". Then, type into the console: plots$GEO004 (update GEO ID accordingly).
+Alternatively, you can load the .RData file that is saved by timePanels to the plotpath.
+Finally, you can dynamically visualize data for all participants by metric using the shiny app, which is found at /Volumes/cnlab/GeoScan/Pilot_Analyses/Figures/QC/shiny_qc_review_060921.R
+
+h/t to M. Fichman for the mechanics to set up time-space panel data - https://github.com/mafichman/musa508_wk10
+h/t to M. Fichman for the shiny tutorial at ~/Box Sync/GeoScanning_Data_822815/Data/Shiny Demo
+
+```{r}
+timestamp <- gsub(":","-",substr(gsub("\\s+","_",as.character(Sys.time())),1,16))
+print(paste("plots and tables will be tagged with the following timestamp:", timestamp))
+plotpath <- paste("/Volumes/cnlab/GeoScan/Pilot_Analyses/Figures/QC/geolocation_coverage_", timestamp, ".pdf", sep = "")
+tablespath <- "/Volumes/cnlab/GeoScan/Pilot_Analyses/Figures/QC/FigData/"
+
+cat("Saving plots for:\n\n")
+pdf(file = plotpath,
+    width = 11,
+    height = 8.5)
+timePanels(studyData, trimmedData, timestamp, plotpath, tablespath) # make sure not to assign to object right here
+dev.off()
+```
+
+## Visualize data with Leaflet
+
+Parameters - dataSet, stayEvents
+If stayEvents is TRUE, the map outputs stay events, otherwise it shows all geotracking observations.
+A leaflet map will pop up in your R Studio Viewer.
+Toggle the data by user in the app menu at top right.
+
+I wouldn't push it too far past 10,000 observations. You might crash your RStudio.
+
+In the example below, you see GEO053's final hours in the study prior to taking an international flight.
+
+```{r}
+# optional selection of participant(s) and other parameters
+geotrackingLeaflet(trimmedData %>% 
+                     filter(filename == "GEO053" & (week == "Week 6" & (dotw == "Sat" | dotw == "Fri"))) %>%
+                     sample_n(., 3747), stayEvents = FALSE)
+```
+
+## Data Export/Import Prior to Joining External Data 
+
+This step saves a workspace (Rdata) and data file (csv) without external data. At this point, data should only be saved onto the ASC server and nowhere else.
+
+To load the workspace at this step, simply enter into the console: load("filepath/filename.RData")
+
+The shape file writing function doesn't seem to work at the moment.
+
+```{r}
+save.image("/Volumes/cnlab/GeoScan/Pilot_Analyses/Workspaces/Geoprocessing/processed_emageo_061621.RData")
+#st_write(cleanData, "/Volumes/cnlab/GeoScan/Pilot_Analyses/Shapefiles/processed_emageo_112420.shp")
+write.csv(cleanData %>% as.data.frame(), "/Volumes/cnlab/GeoScan/Pilot_Analyses/Data/processed_emageo_061621.csv")
+```
+
+## Add Retailer Data and Census Tract IDs
+
+Note: This cell is using old retailer data because it's the pilot data. When adapting this script for the R01 data, make sure that you change the retailers data filename.
+
+bufferAndJoin takes four parameters:
+
+1. a retailer database (retailers)
+2. the geotracking data (here as `.`)
+3. A crs (coordinate reference system) - keep default 2272 for Philadelphia area (linear unit - feet)
+4. A buffer size in the linear units of the crs - (defaulted below to 100 feet)
+
+joinTracts takes the sf dataframe and adds census tracts from the specified year.
+
+```{r}
+# Load most recent retailer database
+retailers <- intakeRetailers("~/Box Sync/GeoScanning_Data_822815/Data/dataOutputs/all_Retailers_10_20_20.csv")
+
+# Associate retailers and census tract info to geotracking observations
+cleanData_Retailers_Tracts <- trimmedData %>% #ungroup(.) %>% sample_n(5000) %>%
+  bufferAndJoin(retailers %>% filter(is.na(lat) == FALSE & is.na(lon) == FALSE), ., 2272, 100) %>%
+  joinTracts(., 2017)
+```
+
+## Visualizing Retailers
+
+exposureLeaflet visualizes a random 5% sample of geotracking observations by participant, stay event (large marker size), and exposures under a designated mph (red color).
+
+Hover over the icon in the upper right corner to select participants after the leaflet map appears.
+
+```{r}
+# Adjust lag mph threshold for exposure in the second argument as desired
+exposureLeaflet(cleanData_Retailers_Tracts, 30) #30 mph
+```
+
+## Data Export/Import after Joining External Data
+
+This step saves a workspace (Rdata) and data file (csv) with external data joined to the data file. At this point, data should only be saved onto the ASC server and nowhere else.
+
+To load the workspace at this step, simply enter into the console: load("filepath/filename.RData")
+
+```{r}
+save.image("/Volumes/cnlab/GeoScan/Pilot_Analyses/Workspaces/Geoprocessing/processed_emageo_retailers100ft_061621.RData")
+write.csv(cleanData_Retailers_Tracts %>% as.data.frame(), "/Volumes/cnlab/GeoScan/Pilot_Analyses/Data/processed_emageo_retailers100ft_061621.csv")
+```
+
+## Adding User-specified Census Data
+
+From this point forward, the parameters are unique to the user's goals and desired analyses. In other words, it depends on what census data you want and at what spatial resolution.
+
+## Load Study Area Geometries
+
+We can create a list of county names for the Philadelphia / Delaware Valley region, and use this vector to both call spatial data from the census using the tigris package, but also to use as filtering criteria later for our retailer locations. This vector is spelling and case sensitive.
+
+Using the counties function in the tigris package, we call the shapefiles for all of PA, NJ and DE from the Census Bureau’s API, reproject it to WGS84, Web Mercator and then filter for names in the countyList vector we created.
+
+``` {r}
+countyList <- c('Philadelphia', 'Delaware', 'Bucks', 'Montgomery',
+                'Chester', 'New Castle', 'Burlington', 'Camden',
+                'Gloucester', 'Salem', 'Cumberland', 'Berks',
+                'Lancaster', 'Mercer', 'Salem', 'Atlantic', 'Monmouth',
+                'Kent')
+counties <- counties(c('PA', 'NJ', 'DE')) %>%
+  st_as_sf()%>%
+  st_transform(crs=4326) %>%
+  filter(NAME %in% countyList)
+```
+
+## Load Census Data
+
+Census spatial data can be drawn from the Census Bureau’s API and joined to our geoscanning observations using a point-in-polygon join. Each point will then be attached to a census geography, and this geography can be joined, via unique ID known as GEOID, to economic and demographic information from the US Census.
+
+This section describes the process of calling the Census API using the tidycensus package and conducting the spatial join. It also describes the process by which one can call variables from the decennial census and the American Community Survey (ACS), with or without spatial information.
+
+You can learn about the use of tidycensus ‘https://walkerke.github.io/tidycensus/articles/basic-usage.html’.
+
+Line 541: We can download libraries of census variable codes for the ACS (e.g. acs5) or for specific sheets for the decennial census (e.g. sf1) as data frames which we can View and sort through in order to find the variables relevant for use.
+
+We are going to need to understand the spatial extent of our study area in order to load the Census tracts we will need to join all of our points. Whether the travels of the subjects outside the retailer study area are of interest would necessitate a certain routine to grab the nation’s entire census database of counties in order to find every location where a spatial join would be necessary.
+
+For now, we will merely grab data in our demonstration study states which we have saved in the vector that we sent to tigris to retrieve county shapefiles earlier. If we deem the data to be too expansive, we can reduce it to just the counties in our countiesList using a left_join - the county GEOID is the first five digits of the tract GEOID. If we want more data, we can assemble the entire country, but as spatial data, this may be ungainly.
+
+Be aware that Census Tracts will be redrawn based on the results of the 2020 Census, and some choices will need to be made with respect to appropriate geometries and time periods of study for the R01 data.
+
+Line 544: We can specify the census variables we’d like to attach. We create a vector called myACS_Vars to store these variables. The call will return data appended with an E for “Estimate” or an “M” for “Margin of Error.”
+
+```{r}
+v17 <- load_variables(2017, "acs5", cache = TRUE)
+#v18 <- load_variables(2018, "acs5", cache = TRUE) #this works, but the data fail to load in the next cell
+#View(v17)
+myACS_Vars <- c("B19083_001", #Gini
+                "B19013_001", #median annual household income
+                "B01003_001", #total population - need to ask Michael about other stats like area
+                "B02001_003", #total Black population
+                "B02001_002", #total White population
+                "B17026_001", #total families
+                "B17026_002", #Ratio of income to poverty level of families in the past 12 months < .5
+                "B17026_003", #Ratio of income to poverty level of families in the past 12 months btw .5 and .74
+                "B17026_004", #Ratio of income to poverty level of families in the past 12 months btw .75 and .99
+                "B15003_001", #Educational attainment--total (population 25 years or older)
+                "B15003_022" #Number of 4-year college degrees for people 25 years or older
+                ) 
+```
+
+Here we do a get_acs call, but a get_decennial call, using different variable names, would produce something comparable for a decennial census year.
+
+The result is an sf object with geometries attached. We set the projection to crs = 4326 aka WGS84 so that it is mutually intelligible with our point data. If we are using a large geographic scale, a geographic coordinate system like WGS84 will be better suited than a projected coordinate system.
+
+If this call is made with the geometry argument set to FALSE, only tabular data will be imported, and the data will be formatted as a tibble or data frame (e.g. a flat file with no geometry).
+
+Issue submitted to Github on 6/17/21 - I get the following output, suggesting that one of the functions is relying on a deprecated function. I'm not sure which it is.
+
+Getting data from the 2013-2017 5-year ACS
+Fetching tract data by state and combining the result.
+`funs()` is deprecated as of dplyr 0.8.0.
+Please use a list of either functions or lambdas: 
+
+  # Simple named list: 
+  list(mean = mean, median = median)
+
+  # Auto named with `tibble::lst()`: 
+  tibble::lst(mean, median)
+
+  # Using lambdas
+  list(~ mean(., trim = .2), ~ median(., na.rm = TRUE))
+This warning is displayed once every 8 hours.
+Call `lifecycle::last_warnings()` to see where this warning was generated.
+
+```{r}
+# update tidyselect if you get the following error message:
+# 'eval_select' is not an exported object from 'namespace:tidyselect'
+options(tigris_use_cache=TRUE) #keeps the census data in the cache for future R sessions
+state_tracts <- 
+  get_acs(geography = "tract",
+          variables = myACS_Vars, 
+          year = 2017, 
+          state = fips(unique(substr(cleanData_Retailers_Tracts$GEOID, 1, 2)), to = "Abbreviation"), 
+          geometry = TRUE,
+          output = "wide") %>%
+  rename(gini_est =  B19083_001E,
+         gini_err = B19083_001M,
+         medinc_est = B19013_001E,
+         medinc_err = B19013_001M,
+         pop_est = B01003_001E, 
+         pop_err = B01003_001M, 
+         popb_est = B02001_003E, 
+         popb_err = B02001_003M,
+         popw_est = B02001_002E, 
+         popw_err = B02001_002M, 
+         povtot_est = B17026_001E,
+         povtot_err = B17026_001M,
+         pov1_est = B17026_002E,
+         pov1_err = B17026_002M,
+         pov2_est = B17026_003E,
+         pov2_err = B17026_003M,
+         pov3_est = B17026_004E,
+         pov3_err = B17026_004M,
+         edutot_est = B15003_001E,
+         edutot_err = B15003_001M,
+         edu4year_est = B15003_022E,
+         edu4year_err = B15003_022M) %>%
+  mutate(pct_black = popb_est/pop_est,
+         pct_white = popw_est/pop_est,
+         below_pov = (pov1_est+pov2_est+pov3_est)/povtot_est,
+         pct_4yd = edu4year_est/edutot_est) %>%
+  st_transform(crs = 4326)
+```
+
+## Merge GeoScan Data and Census Data
+
+We can conduct a point-in-polygon spatial join of our geoscanning observations to our 2010 census tract geograhies. Each observation will now be associated with the tract in which it is located. (For analyses of R01 data, it would be good to update this to 2020 tracts once data for those become available.)
+
+In this code block, we are imparting the relevant tract ID only by using the select function and keeping only the GEOID and NAME identifiers. The idea is that you can join the data to census information at any point using a tabular join by one of these unique IDs. One may keep any and all census variables if you wish.
+
+Note that both data sources need to be in the same coordinate system, in this case crs=4326 aka WGS84 aka “Web Mercator”. This coordinate system is particularly suitable for large geographic areas but uses a linear unit of decmial degrees, and should not be used for spatial analysis where straight line distances or areas are being measured.
+
+Issue submitted to Github on 6/17/21: This results in 5 observations in Delaware that crop up as NAs in the output of cleanData_join_census, but they are actually present in state_tracts. Should this just be a tabular join using merge() rather than a spatial join using st_join()?
+
+```{r}
+cleanData_join_census <- st_join(cleanData_Retailers_Tracts %>%
+                                    st_transform(crs = 4326), 
+                             state_tracts %>%
+                               #removed GEOID from the select function because spatial join ends up creating GEOID.x and GEOID.y
+                               dplyr::select(NAME, gini_est, medinc_est, pct_black, pct_white, below_pov, pct_4yd) %>%
+                               st_transform(crs = 4326), 
+                             join = st_intersects, 
+                             left = TRUE)
+```
+
+## Summarize and Visualize Observations by Census Tract
+
+The data can now be easily summarized and mapped by Census geographies.
+
+Here we will just examine a map of Philadelphia county by subject - but this approach can be used to subset any geography for mapping.
+
+We create a “bounding box” to set the limits of the mapping environment, in this case called ‘philaBox’.
+
+We create a summary of observations by tract. This is done inside of a ggplot call’s geom_sf geometry call so as not to create a datframe in our environment. Mainly this is a matter of taste and housekeeping for the data environment. But this can be done outside of a ggplot call if desired- one can create a data frame in order to summarize in tabular form or analyze further.
+
+We summarize our data by Census GEOID and subject using the group_by and summarize functions in sequence. Note that we coerce cleanData to a data frame prior to doing this. The geometry column of an sf object is resistent to being discarded as part of a summarization.
+
+We can then join our summary to the sf object consisting of census tract geographies. We send our summary to the “right” side of a left_join with our larger tract shapefile. All of the tracts on the “left” are kept - so that we keep all of the tracts with zero observations.
+
+```{r}
+#ACROSS ALL PARTICIPANTS
+philaBox <- st_bbox(counties %>%
+                      filter(NAME == "Philadelphia"))
+
+ggplot()+ 
+  geom_sf(data = state_tracts, color = "grey", fill = "transparent")+
+  geom_sf(data = cleanData_join_census %>% 
+            as.data.frame() %>% 
+            group_by(GEOID) %>% #, pID
+            dplyr::summarize(total_obs = n()) %>% 
+            left_join(state_tracts, ., by = "GEOID"), #%>%
+            #filter(is.na(pID) == FALSE),
+          aes(fill = total_obs),
+          color = "grey")+
+  scale_color_viridis_d()+
+  geom_sf(data = counties %>%
+                      filter(NAME == "Philadelphia"),
+          fill = "transparent", color = "black")+
+  #facet_wrap(~pID)+
+  xlim(philaBox$xmin, philaBox$xmax)+
+  ylim(philaBox$ymin, philaBox$ymax)+
+  labs(
+    title = "Geoscan Observations by Census Tract, Philadelphia, PA")+
+  mapTheme
+```
+
+```{r}
+#FOR SELECTED PARTICIPANTS
+#this works best when visualizing just two participants at a time
+#it breaks if you try to visualize all participants at once
+philaBox <- st_bbox(counties %>%
+                      filter(NAME == "Philadelphia"))
+
+ggplot()+ 
+  geom_sf(data = state_tracts, color = "grey", fill = "transparent")+
+  geom_sf(data = cleanData_join_census %>% 
+            as.data.frame() %>% 
+            group_by(GEOID, filename) %>%
+            dplyr::summarize(total_obs = n()) %>% 
+            left_join(state_tracts, .) %>%
+            filter(filename=="GEO022"|filename=="GEO078"),
+          aes(fill = total_obs),
+          color = "grey")+
+  scale_color_viridis_d()+
+  geom_sf(data = counties %>%
+                      filter(NAME == "Philadelphia"),
+          fill = "transparent", color = "black")+
+  #facet_wrap(vars(filename), ncol = 2)+ #not sure why, but this stopped working
+  facet_grid(~filename)+ #using facet_grid instead
+  xlim(philaBox$xmin, philaBox$xmax)+
+  ylim(philaBox$ymin, philaBox$ymax)+
+  labs(
+    title = "Geoscan Observations by Participant and Census Tract, Philadelphia, PA")+
+  mapTheme
+```
+
+## Summarize Observations by Tract Characteristics and Time
+
+We can also tabulate assorted statistics per tract and relate them to underlying census information.
+
+Here are some examples. Note that in some of the following code, rather than including data manipulation within a ggplot call, we pipe manipulations of cleanData_join_census right into a ggplot call using the %>% operator.
+
+Example:
+
+We can calculate the frequency of observation by census tract and relate that to the Gini index of economic inequality.
+
+```{r}
+cleanData_join_census %>% 
+  as.data.frame() %>% 
+  group_by(GEOID, filename) %>% 
+     dplyr::summarize(total_obs = n()) %>% 
+  left_join(state_tracts, .) %>%
+     filter(filename=="GEO022"|filename=="GEO078") %>% 
+  ggplot()+ 
+  geom_point(aes(y = total_obs, x = gini_est)) + 
+  facet_wrap(~filename)+
+  labs(
+    title = "Frequency of observation as a function of 2017 tract Gini Coefficient",
+    y = "Total observations",
+    x = "Gini, 2017"
+    )+
+  plotTheme
+```
+
+Another example: Plotting tract % White by tract % below poverty
+
+```{r}
+cleanData_join_census %>% 
+  as.data.frame() %>% 
+  dplyr::select(-geometry) %>%
+  group_by(GEOID, filename) %>% 
+     dplyr::summarize(median_income = median(medinc_est, na.rm = TRUE)) %>% 
+  left_join(., state_tracts) %>%
+     filter(filename=="GEO022"|filename=="GEO078") %>%
+  ggplot()+ 
+  geom_point(aes(y = below_pov, x = pct_white)) + 
+  geom_smooth(aes(y = below_pov, x = pct_white), method = "lm") +
+  facet_wrap(~filename) +
+  labs(
+    title = "Percent Below Poverty as a function of Percent of Population that is White",
+    y = "Percent of Population below Poverty, 2017 5-year estimate",
+    x = "Percent of Population that is White, 2017 5-year estimate"
+    )+
+  plotTheme
+```
+
+For more cool visualizations by census tract, see Michael's codebase. It also has some cool visualizations of duration/velocity data.
+~/Box Sync/GeoScanning_Data_822815/Data/R Markdown/GeoScanning_CodeBase_12_9_19.html
+
+
+## Computing Exposure to Tobacco Retailers
+
+Immediate Exclusions from Exposure Computations:
+
+(1) Any observations outside of tristate area (by default because we don't have retailer data outside of this area). For the pilot, we may want to consider dropping data from DE because we have no data from 2017-2018.
+(2) Rows without Retailer Info (-X obs with 100-ft buffer; -782709 obs with 25-ft buffer)
+(3) Rows without any lag speeds below 30 mph (-x obs with 100-ft buffer; -98 obs with 25-ft buffer)
+
+We therefore compute several variables that allow us to further determine whether or not an intersecting point-in-polygon incident is actually an exposure. By carrying along our inputed and measured speed variables and time lag variables we can figure out if there was a passby at high speed or actually some lingering. For now, I'm opting to restrict exposure computations to exposure events with at least one lagmph of no more than 30 mph.
+
+Speed Information: Each metric computed for all grouped points for a given combination of participant, retailer, stay event, and bin (i.e., "exposure")
+obs - total number of geolocation observations
+rg_hr - average radius of gyration in meters
+duration_seconds - total exposure duration. Equals zero if just one point.
+min_lag_mph - the min value of imputed lag velocity.
+max_lag_mph - the max value of imputed lag velocity.
+range_lag_mph - the range of imputed lag velocity.
+max_measured_mph - the max value of measured velocity. This value is likely to be NA because of measurement error. I don't compute it for the pilot because the participants with MapMob data don't have an app-specific velocity variable.
+three_time_lags_sec - the mean value of each observation’s averaged three distance lags.
+
+License Information:
+license_created - The date associated with the creation/renewal of the retailer license in the data set (be careful - the license database is periodically updated, and may have new renewal dates that post-date exposures to the same location under a previous license).
+license_expiration - Expiration date of retailer license
+license_active - A variable which indicates whether the license was active at the time of the exposure measurement.
+
+Other notes: The retailer data come from as early as 2018. So some of these exposures in the pilot data from 2017 assume that the data from 2018 apply. We could try to get older data from the authorities, but that would involve special requests to the states of PA, NJ, and DE. If we can't do this, we'd want to illustrate the extent to which licenses change over time. For example, we could go back in time on google street view for each exposure (or a sample of these exposures if the total number is unreasonably large.)
+
+PA: 2018, 2020
+NJ: 2018, 2019, 2020
+DE: 2020
+
+In the future, it may be interesting to look at licenses that are of different types at the same address (e.g., retail, OTP--on the premises). Find someone to interview at each state about retail data. Or contact Philly public health department. For now, data processing doesn't distinguish by license type. In fact, intakeRetailers() excludes licenses with the exact same location and expiration date.
+
+```{r}
+# Summarize exposures by participant, coverage bin, and discrete space-time groupings (i.e., stay events)
+exposures <- cleanData_join_census %>% data.frame() %>% # if you skipped adding in census data, be sure to update your dataframe name to cleanData_Retailers_Tracts
+            # need to add something that accounts for time window of duplicate retailer coordinates.
+            filter(license_loc_twin == FALSE,          # dropping 19373 observations with licenses that are registered to the exact same coordinates.
+                   is.na(trade_name) == FALSE) %>%     # dropping any observations without retailer exposure
+            group_by(filename, covbin, stayeventgroup) %>% #Other possible grouping variables: tradename and geometry
+            summarize(min_datetime = min(datetime),
+                      max_datetime = max(datetime),
+                      duration_seconds = as.numeric(max(datetime) - min(datetime)),
+                      licenses = n(),
+                      active_licenses = sum(max_datetime < as.POSIXct(expiration_date)),
+                      rg_hr = mean(rg_hr),
+                      min_lag_mph = min(lagmph),
+                      max_lag_mph = max(lagmph),
+                      avg_lag_mph = mean(lagmph, na.rm=TRUE),
+                      range_lag_mph = max(lagmph) - min(lagmph),
+                      three_time_lags_sec = mean(mean_3_lagDist_ft),
+                      #max_measured_mph = max(locations.velocity),          #we don't have velocity data for MapMob subjects
+                      #license_created = min(ymd(publish_date)),
+                      #license_expiration = max(ymd(expiration_date)), 
+                      bin_dur = mean(cbin_dur)) %>%
+  filter(active_licenses > 0) %>%     #Dropping 0 exposure events involving inactive licenses
+  filter(min_lag_mph < 30)   #Dropping 1181 exposure events without at least one observation with an inferred speed under 30 mph
+
+summary(as.numeric(exposures$duration_seconds))
+hist(as.numeric(exposures$min_lag_mph), breaks=60, xlim=c(0,30))
+
+#Select all exposures to licenses at unique (non-duplicate) coordinates
+exporates <- exposures %>%
+  group_by(filename, covbin) %>%
+  summarize(expHourly = sum(active_licenses)/mean(bin_dur),                            #rate of unique license exposures per hour
+            expPct_bintime = sum(duration_seconds, na.rm=TRUE)/(mean(bin_dur)*60*60),  #percentage of bin time under exposure
+            expPct_binobs = sum(duration_seconds>0)/n(),                               #percentage of unique bin observations (i.e., stay events) with some exposure duration
+            expSpeed_m = mean(avg_lag_mph, na.rm=TRUE),                                #average inferred lag speed for each exposure
+            expSpeed_sd = sd(avg_lag_mph, na.rm=TRUE)) %>%                             #standard deviation for inferred lag speed for each exposure
+  ungroup()
+  
+cleanData_join_all <- merge(cleanData_join_census, 
+                                  exporates, 
+                                  all.x=TRUE, by=c("filename","covbin"))
+
+exposures_summary <- cleanData_join_all %>% 
+  data.frame() %>% 
+  filter(substr(GEOID,1,2) %in% c("42","34","10")) %>% # filters observations from outside tristate area
+  group_by(filename, covbin) %>%
+  summarize(exposure = sum(!is.na(expHourly))>0)
+cat("\nPercentage of coverage bins with exposure:\n")
+sum(exposures_summary$exposure)/dim(exposures_summary)[1]
+#Total coverage bins with exposures:
+#100-ft buffer: 53.0% of 1919 bins in the tri-state area
+#25-ft buffer: 31.9% of 1919 bins in the tri-state area
+```
+
+## Data quality checks
+
+Here, I'm looking at relationships between the different movement metrics in the retailer exposures dataframe. These relationships look similar regardless of whether a 25-ft or a 100-ft buffer was used.
+
+When looking at relationships at the level of stay event, longer exposure durations were associated with:
+  More exposure to active licenses
+  Less overall movement (low rg_hr)
+  Slower movement speeds
+  More variability in speed (range_lag_mph)
+  
+When looking at relationships at the level of coverage bin, greater percentage of bin time in exposure was associated with:
+  Greater percentage of exposures with some duration
+  Greater hourly exposure frequency
+  Lower speed and lower variance in speed at exposure
+
+Additional ways to look at these relationships in the future:
+  Add timeline vs. mapmob
+  Print out study dates along with participant IDs or find some way to distinguish between non-compliance and non-study days.
+  Look at GEO053 3000 observations per day
+  Look at GEO048 for random data loss throughout the day (dropping mapmob data? duplicate rows?)
+
+```{r}
+# Function for computing p value matrices
+cor.mtest <- function(mat, ...) {
+    mat <- as.matrix(mat)
+    n <- ncol(mat)
+    p.mat<- matrix(NA, n, n)
+    diag(p.mat) <- 0
+    for (i in 1:(n - 1)) {
+        for (j in (i + 1):n) {
+            tmp <- cor.test(mat[, i], mat[, j], ...)
+            p.mat[i, j] <- p.mat[j, i] <- tmp$p.value
+        }
+    }
+  colnames(p.mat) <- rownames(p.mat) <- colnames(mat)
+  p.mat
+}
+library("corrplot")
+
+# Relationships at level of stay event
+corrdata <- exposures %>%
+  ungroup() %>%
+  dplyr::select(duration_seconds,
+                active_licenses,
+                rg_hr,
+                min_lag_mph,
+                max_lag_mph,
+                avg_lag_mph,
+                range_lag_mph,
+                three_time_lags_sec,
+                #max_measured_mph,
+                bin_dur) %>% 
+  na_if("NaN") %>% na_if("Inf")
+p.mat <- cor.mtest(corrdata, use = "pairwise.complete.obs")
+c.mat <- cor(corrdata, use = "pairwise.complete.obs")
+corrplot(c.mat, method="color",  
+         type="upper", 
+         addCoef.col = "black", # Add coefficient of correlation
+         tl.col="black", tl.srt=45, #Text label color and rotation
+         # Combine with significance
+         p.mat = p.mat, sig.level = 0.05, insig = "blank",
+         # Remove diagonal
+         diag = FALSE)
+
+# Relationships at level of coverage bin
+corrdata <- exporates %>%
+  ungroup() %>%
+  dplyr::select(expPct_bintime, #percentage of bin time under exposure
+            expPct_binobs,      #percentage of unique bin observations (i.e., stay events) with some exposure duration
+            expHourly,          #rate of unique license exposures per hour
+            expSpeed_m,         #average inferred lag speed for each exposure
+            expSpeed_sd) %>%    #standard deviation for inferred lag speed for each exposure
+  na_if("NaN") %>% na_if("Inf")
+p.mat <- cor.mtest(corrdata, use = "pairwise.complete.obs")
+c.mat <- cor(corrdata, use = "pairwise.complete.obs")
+corrplot(c.mat, method="color",  
+         type="upper", 
+         addCoef.col = "black", # Add coefficient of correlation
+         tl.col="black", tl.srt=45, #Text label color and rotation
+         # Combine with significance
+         p.mat = p.mat, sig.level = 0.05, insig = "blank",
+         # Remove diagonal
+         diag = FALSE)
+```
+
+## Preparing Coverage Bin Data for Analysis & Compliance Checks
+
+For census data, I compute a weighted average of each index based on the proportion of time points spent in each tract. 
+
+After creating a reduced dataframe with one line per COVERAGE bin, these resulting weighted averages for each COVERAGE bin would then be standardized across all participants and bins into z-scores.
+
+Analyses by time bins specific to each EMA item (_ibin) are reported in much older outdated scripts in the following directory: ~/Box Sync/GeoScanning_Data_822815/Data/Scripts/Archive
+Craving_Analysis_31.8.20.Rmd
+Feeling_Analysis_31.8.20.Rmd
+LastCig_Analysis_26.8.20.Rmd
+NumCig_Analysis_23.8.20.Rmd
+
+This block and the next block consist of repetitive code specific to analyses with census data that could use some tidyverse love, but I didn't have time to do that.
+
+```{r}
+#Correcting anomalous responses: These really should have be corrected in the EMA preparation script
+data <- cleanData_join_all
+data$feelscore_rbin[data$feelscore_rbin==91] <- NA #original response entered as: "Feel#91"
+data$feelscore_cbin[data$feelscore_cbin==50] <- 9
+data$feelscore_rbin[data$feelscore_rbin==72] <- 7 #original response entered as: "Feel 7smoke 2"
+data$feelscore_rbin[data$feelscore_rbin==76] <- 7 #original response entered as: "Feel 7smoke 6"
+data$feelscore_cbin[data$feelscore_cbin==72] <- 7 #original response entered as: "Feel 7smoke 2"
+data$feelscore_cbin[data$feelscore_cbin==41.5] <- 7 #not sure where this number came from, but rbins suggest a score of 7
+data$cravescore_cbin[data$cravescore_cbin==10] <- 9 #correcting an impossible rating that came from Merge_AllEMA_Location.Rmd
+
+# identifying time bins and merging with main data: this dataframe averages across random items within coverage bin
+# it is possible to analyze the data by random bin (1 row per random bin), but currently there appears to be a bug that caused issues with assigning rbin data for the first few minutes of a coverage bin (see AllEMA_Analysis_15.10.20.Rmd script for documentation).
+covbindata <- data %>%
+  as.data.frame() %>%
+  group_by(filename) %>%
+  #this mutate function could be altered to get info about the top 3 locations vs. top location
+  mutate(gini_top = getmode(gini_est),
+         medinc_top = getmode(medinc_est),
+         pct_white_top = getmode(pct_white),
+         pct_black_top = getmode(pct_black),
+         pct_4yd_top = getmode(pct_4yd),
+         below_pov_top = getmode(below_pov),
+         expPct_bintime_top = getmode(expPct_bintime),         #percentage of bin time under exposure
+         expPct_binobs_top = getmode(expPct_binobs),           #percentage of unique bin observations (i.e., stay events) with some exposure duration
+         expHourly_top = getmode(expHourly),                   #rate of unique license exposures per hour
+         expSpeed_m_top = getmode(expSpeed_m),                 #average inferred lag speed for each exposure
+         expSpeed_sd_top = getmode(expSpeed_sd)) %>%           #standard deviation for inferred lag speed for each exposure
+  group_by(filename, covbin) %>%
+  #filter(pID != "GEO021" & pID != "GEO043" & pID != "GEO048" & pID != "GEO072") %>% # participants with fewer than 20 coverage bins
+  dplyr::summarize(bin_date = unique(date)[1], # [1] because some bins may include midnight
+               bin_period = unique(covbinterval),
+               bin_dur = unique(cbin_dur),
+               study_day = unique(day),
+               day_of_week = unique(dayofweek)[1],
+               study_period = unique(Study_Period),
+               platform_ema = unique(platform_ema),
+               platform_geo = unique(platform),
+               expPct_bintime = unique(expPct_bintime),         #percentage of bin time under exposure
+               expPct_binobs = unique(expPct_binobs),           #percentage of unique bin observations (i.e., stay events) with some exposure duration
+               expHourly = unique(expHourly),                   #rate of unique license exposures per hour
+               expSpeed_m = unique(expSpeed_m),                 #average inferred lag speed for each exposure
+               expSpeed_sd = unique(expSpeed_sd),               #standard deviation for inferred lag speed for each exposure
+               cigarettes = mean(numcigs_cbin, na.rm=TRUE),
+               minutes = mean(mincigs_cbin, na.rm=TRUE),
+               feeling_score = mean(feelscore_cbin, na.rm=TRUE),
+               craving_score = mean(cravescore_cbin, na.rm=TRUE),
+               # merge error: rbin doesn't always appear to have a value if the geo data fall close to the start of a coverage bin
+               feeling_obs = length(na.omit(unique(feelscore_rbin))),
+               craving_obs = length(na.omit(unique(cravescore_rbin))),
+               gini_avg = mean(gini_est, na.rm=TRUE),
+               medinc_avg = mean(medinc_est, na.rm=TRUE),
+               white_avg = mean(pct_white, na.rm=TRUE),
+               black_avg = mean(pct_black, na.rm=TRUE),
+               degree_avg = mean(pct_4yd, na.rm=TRUE),
+               pov_avg = mean(below_pov, na.rm=TRUE),
+               expPct_bintime_top = mean(expPct_bintime_top, na.rm=TRUE),         #percentage of bin time under exposure
+               expPct_binobs_top = mean(expPct_binobs_top, na.rm=TRUE),           #percentage of unique bin observations (i.e., stay events) with some exposure duration
+               expHourly_top = mean(expHourly_top, na.rm=TRUE),                   #rate of unique license exposures per hour
+               expSpeed_m_top = mean(expSpeed_m_top, na.rm=TRUE),                 #average inferred lag speed for each exposure
+               expSpeed_sd_top = mean(expSpeed_sd_top, na.rm=TRUE),               #standard deviation for inferred lag speed for each exposure
+               gini_top = mean(gini_top, na.rm=TRUE),
+               medinc_top = mean(medinc_top, na.rm=TRUE),
+               white_top = mean(pct_white_top, na.rm=TRUE),
+               black_top = mean(pct_black_top, na.rm=TRUE),
+               degree_top = mean(pct_4yd_top, na.rm=TRUE),
+               pov_top = mean(below_pov_top, na.rm=TRUE),
+               expPct_bintime_diff = expPct_bintime - expPct_bintime_top,     #percentage of bin time under exposure
+               expPct_binobs_diff = expPct_binobs - expPct_binobs_top,           #percentage of unique bin observations (i.e., stay events) with some exposure duration
+               expHourly_diff = expHourly - expHourly_top,                   #rate of unique license exposures per hour
+               expSpeed_m_diff = expSpeed_m - expSpeed_m_top,                 #average inferred lag speed for each exposure
+               expSpeed_sd_diff = expSpeed_sd - expSpeed_m_top,               #standard deviation for inferred lag speed for each exposure
+               gini_diff = gini_avg - gini_top,
+               medinc_diff = medinc_avg - medinc_top,
+               white_diff = white_avg - white_top,
+               black_diff = black_avg - black_top,
+               degree_diff = degree_avg - degree_top,
+               pov_diff = pov_avg - pov_top,
+               cph = cigarettes/bin_dur)
+# Converting some NAs in the exposure data to zeros (not helpful for the exposure x speed metrics)
+covbindata$expPct_bintime[is.na(covbindata$expPct_bintime)] <- 0
+covbindata$expPct_binobs[is.na(covbindata$expPct_binobs)] <- 0
+covbindata$expHourly[is.na(covbindata$expHourly)] <- 0
+
+# Reviewing daily compliance
+datesdata <- read.csv("~/Box Sync/GeoScanning_Data_822815/Data/GeoDates.csv",stringsAsFactors=FALSE)
+datesdata <- within(datesdata, {
+  Start1 = as.Date(Start1,format='%m/%d/%Y')
+  End1 = as.Date(End1,format='%m/%d/%Y')
+  Start2 = as.Date(Start2,format='%m/%d/%Y')
+  End2 = as.Date(End2,format='%m/%d/%Y')
+  End = as.Date(End,format='%m/%d/%Y')
+})
+datesdata <- within(datesdata, {
+  Study_Period <- Start1 %--% End
+})
+datesdata$Study_Duration <- as.period(datesdata$Study_Period, unit="day") + days(1)
+datesdata$EMA_Days <- ifelse(datesdata$Study_Duration<=days(15), 14, 42)
+#The next line adjusts date totals to reflect participant dropouts and missing data.
+#KEEP BUT: GEO004/GEO10/GEO013/GEO035 had rather low compliance for baseline and/or the intervention.
+#KEEP BUT: GEO033 is missing half of the intervention EMA or mapmob data--did they lose interest?
+#GEO067 had a long EMA schedule (67 days) that doesn't quite agree with the official study period (71 days) but appears to have responded every day
+#GEO070 is missing either EMA or timeline data from the intervention
+#GEO071 is missing EMA data from the intervention (Burst data)
+#GEO073 dropped out at T2
+#GEO048 has only a few day's worth of data--appears to have dropped out at track 1.
+datesdata$EMA_Days[datesdata$pID=="GEO067"] <- 67
+datesdata$EMA_Days[datesdata$pID=="GEO073"|datesdata$pID=="GEO071"|datesdata$pID=="GEO070"] <- 14
+datesdata <- subset(datesdata, select=c(pID, Study_Period, EMA_Days))
+
+#Checking compliance
+compliance_daily <- covbindata %>%
+  group_by(filename, bin_date) %>%
+  dplyr::summarize(resp_rate = length(bin_date)/3,
+            study_period = unique(study_period))
+compliance_daily <- merge(compliance_daily, datesdata, by.x = "filename", by.y = "pID", all.x = TRUE)
+compliance_overall <- compliance_daily %>%
+  group_by(filename) %>%
+  dplyr::summarize(compliance = sum(resp_rate)/unique(EMA_Days),
+            study_days = unique(EMA_Days))
+compliance_overall$outlier <- ifelse(compliance_overall$compliance < (mean(compliance_overall$compliance - 3*sd(compliance_overall$compliance))), "exclude", "keep")
+compliance_overall #suggests no outliers, but consider using more stringent thresholds?
+
+#Checking distribution of exposure rates by bin
+summary(covbindata$expPct_bintime)
+summary(covbindata$expPct_binobs)
+summary(covbindata$expHourly)
+summary(covbindata$expSpeed_m)
+summary(covbindata$expSpeed_sd)
+hist(covbindata$expPct_bintime) #, breaks=128, xlim=c(0,32)) ... you can also add title and xlab
+hist(covbindata$expPct_binobs)
+hist(covbindata$expHourly)
+hist(covbindata$expSpeed_m)
+hist(covbindata$expSpeed_sd)
+
+#Checking distribution of cigarettes smoked per hour
+summary(covbindata$cph)
+hist(covbindata$cph, breaks=100, xlim=c(0,25), 
+     main="Distribution of cigarettes smoked per hour",
+     xlab="Cigarettes smoked per hour")
+cutoff <- mean(covbindata$cph, na.rm=TRUE)+3.5*sd(covbindata$cph, na.rm = TRUE)
+outliers_cigs <- na.omit(covbindata$cph[covbindata$cph>cutoff])
+covbindata$cph[covbindata$cph>cutoff] <- cutoff #winsorize at 3sd above the group's mean
+
+#Checking distribution of minutes since last cigarette
+summary(covbindata$minutes)
+covbindata$minutes[covbindata$minutes<0] <- NA #remove late synced responses
+summary(covbindata$minutes)
+hist(covbindata$minutes, breaks=600, xlim=c(0,300), 
+     main="Distribution of minutes since last cigarette",
+     xlab="Minutes")
+cutoff <- mean(covbindata$minutes, na.rm=TRUE)+3.5*sd(covbindata$minutes, na.rm = TRUE)
+outliers_mins <- na.omit(covbindata$minutes[covbindata$minutes>cutoff])
+covbindata$minutes[covbindata$minutes>cutoff] <- cutoff #winsorize at 3sd above the group's mean
+
+#Scale and winsorize
+covbindata$z.expPct_bintime <- scale(covbindata$expPct_bintime)
+covbindata$z.expPct_binobs <- scale(covbindata$expPct_binobs)
+covbindata$z.expHourly <- scale(covbindata$expHourly)
+covbindata$z.expSpeed_m <- scale(covbindata$expSpeed_m)
+covbindata$z.expSpeed_sd <- scale(covbindata$expSpeed_sd)
+covbindata$z.cph <- scale(covbindata$cph)
+covbindata$z.mins <- scale(covbindata$minutes)
+covbindata$z.feel <- scale(covbindata$feeling_score)
+covbindata$z.crave <- scale(covbindata$craving_score)
+covbindata$z.gini = scale(covbindata$gini_avg)
+covbindata$z.medinc = scale(covbindata$medinc_avg)
+covbindata$z.black = scale(covbindata$black_avg)
+covbindata$z.white = scale(covbindata$white_avg)
+covbindata$z.degree = scale(covbindata$degree_avg)
+covbindata$z.pov = scale(covbindata$pov_avg)
+covbindata$zt.expPct_bintime <- scale(covbindata$expPct_bintime_top)
+covbindata$zt.expPct_binobs <- scale(covbindata$expPct_binobs_top)
+covbindata$zt.expHourly <- scale(covbindata$expHourly_top)
+covbindata$zt.expSpeed_m <- scale(covbindata$expSpeed_m_top)
+covbindata$zt.expSpeed_sd <- scale(covbindata$expSpeed_sd_top)
+covbindata$zt.gini = scale(covbindata$gini_top)
+covbindata$zt.medinc = scale(covbindata$medinc_top)
+covbindata$zt.black = scale(covbindata$black_top)
+covbindata$zt.white = scale(covbindata$white_top)
+covbindata$zt.degree = scale(covbindata$degree_top)
+covbindata$zt.pov = scale(covbindata$pov_top)
+covbindata$zd.expPct_bintime <- scale(covbindata$expPct_bintime_diff)
+covbindata$zd.expPct_binobs <- scale(covbindata$expPct_binobs_diff)
+covbindata$zd.expHourly <- scale(covbindata$expHourly_diff)
+covbindata$zd.expSpeed_m <- scale(covbindata$expSpeed_m_diff)
+covbindata$zd.expSpeed_sd <- scale(covbindata$expSpeed_sd_diff)
+covbindata$zd.gini = scale(covbindata$gini_diff)
+covbindata$zd.medinc = scale(covbindata$medinc_diff)
+covbindata$zd.black = scale(covbindata$black_diff)
+covbindata$zd.white = scale(covbindata$white_diff)
+covbindata$zd.degree = scale(covbindata$degree_diff)
+covbindata$zd.pov = scale(covbindata$pov_diff)
+covbindata$z.expPct_bintime[covbindata$z.expPct_bintime > 3.5] <- 3.5
+covbindata$z.expPct_bintime[covbindata$z.expPct_bintime < -3.5] <- -3.5
+covbindata$z.expPct_binobs[covbindata$z.expPct_binobs > 3.5] <- 3.5
+covbindata$z.expPct_binobs[covbindata$z.expPct_binobs < -3.5] <- -3.5
+covbindata$z.expHourly[covbindata$z.expHourly > 3.5] <- 3.5
+covbindata$z.expHourly[covbindata$z.expHourly < -3.5] <- -3.5
+covbindata$z.expSpeed_m[covbindata$z.expSpeed_m > 3.5] <- 3.5
+covbindata$z.expSpeed_m[covbindata$z.expSpeed_m < -3.5] <- -3.5
+covbindata$z.expSpeed_sd[covbindata$z.expSpeed_sd > 3.5] <- 3.5
+covbindata$z.expSpeed_sd[covbindata$z.expSpeed_sd < -3.5] <- -3.5
+covbindata$z.gini[covbindata$z.gini > 3.5] <- 3.5
+covbindata$z.gini[covbindata$z.gini < -3.5] <- -3.5
+covbindata$z.medinc[covbindata$z.medinc > 3.5] <- 3.5
+covbindata$z.medinc[covbindata$z.medinc < -3.5] <- -3.5
+covbindata$z.black[covbindata$z.black > 3.5] <- 3.5
+covbindata$z.black[covbindata$z.black < -3.5] <- -3.5
+covbindata$z.white[covbindata$z.white > 3.5] <- 3.5
+covbindata$z.white[covbindata$z.white < -3.5] <- -3.5
+covbindata$z.degree[covbindata$z.degree > 3.5] <- 3.5
+covbindata$z.degree[covbindata$z.degree < -3.5] <- -3.5
+covbindata$z.pov[covbindata$z.pov > 3.5] <- 3.5
+covbindata$z.pov[covbindata$z.pov < -3.5] <- -3.5
+covbindata$zt.expPct_bintime[covbindata$zt.expPct_bintime > 3.5] <- 3.5
+covbindata$zt.expPct_bintime[covbindata$zt.expPct_bintime < -3.5] <- -3.5
+covbindata$zt.expPct_binobs[covbindata$zt.expPct_binobs > 3.5] <- 3.5
+covbindata$zt.expPct_binobs[covbindata$zt.expPct_binobs < -3.5] <- -3.5
+covbindata$zt.expHourly[covbindata$zt.expHourly > 3.5] <- 3.5
+covbindata$zt.expHourly[covbindata$zt.expHourly < -3.5] <- -3.5
+covbindata$zt.expSpeed_m[covbindata$zt.expSpeed_m > 3.5] <- 3.5
+covbindata$zt.expSpeed_m[covbindata$zt.expSpeed_m < -3.5] <- -3.5
+covbindata$zt.expSpeed_sd[covbindata$zt.expSpeed_sd > 3.5] <- 3.5
+covbindata$zt.expSpeed_sd[covbindata$zt.expSpeed_sd < -3.5] <- -3.5
+covbindata$zt.gini[covbindata$zt.gini > 3.5] <- 3.5
+covbindata$zt.gini[covbindata$zt.gini < -3.5] <- -3.5
+covbindata$zt.medinc[covbindata$zt.medinc > 3.5] <- 3.5
+covbindata$zt.medinc[covbindata$zt.medinc < -3.5] <- -3.5
+covbindata$zt.black[covbindata$zt.black > 3.5] <- 3.5
+covbindata$zt.black[covbindata$zt.black < -3.5] <- -3.5
+covbindata$zt.white[covbindata$zt.white > 3.5] <- 3.5
+covbindata$zt.white[covbindata$zt.white < -3.5] <- -3.5
+covbindata$zt.degree[covbindata$zt.degree > 3.5] <- 3.5
+covbindata$zt.degree[covbindata$zt.degree < -3.5] <- -3.5
+covbindata$zt.pov[covbindata$zt.pov > 3.5] <- 3.5
+covbindata$zt.pov[covbindata$zt.pov < -3.5] <- -3.5
+covbindata$zd.expPct_bintime[covbindata$zd.expPct_bintime > 3.5] <- 3.5
+covbindata$zd.expPct_bintime[covbindata$zd.expPct_bintime < -3.5] <- -3.5
+covbindata$zd.expPct_binobs[covbindata$zd.expPct_binobs > 3.5] <- 3.5
+covbindata$zd.expPct_binobs[covbindata$zd.expPct_binobs < -3.5] <- -3.5
+covbindata$zd.expHourly[covbindata$zd.expHourly > 3.5] <- 3.5
+covbindata$zd.expHourly[covbindata$zd.expHourly < -3.5] <- -3.5
+covbindata$zd.expSpeed_m[covbindata$zd.expSpeed_m > 3.5] <- 3.5
+covbindata$zd.expSpeed_m[covbindata$zd.expSpeed_m < -3.5] <- -3.5
+covbindata$zd.expSpeed_sd[covbindata$zd.expSpeed_sd > 3.5] <- 3.5
+covbindata$zd.expSpeed_sd[covbindata$zd.expSpeed_sd < -3.5] <- -3.5
+covbindata$zd.gini[covbindata$zd.gini > 3.5] <- 3.5
+covbindata$zd.gini[covbindata$zd.gini < -3.5] <- -3.5
+covbindata$zd.medinc[covbindata$zd.medinc > 3.5] <- 3.5
+covbindata$zd.medinc[covbindata$zd.medinc < -3.5] <- -3.5
+covbindata$zd.black[covbindata$zd.black > 3.5] <- 3.5
+covbindata$zd.black[covbindata$zd.black < -3.5] <- -3.5
+covbindata$zd.white[covbindata$zd.white > 3.5] <- 3.5
+covbindata$zd.white[covbindata$zd.white < -3.5] <- -3.5
+covbindata$zd.degree[covbindata$zd.degree > 3.5] <- 3.5
+covbindata$zd.degree[covbindata$zd.degree < -3.5] <- -3.5
+covbindata$zd.pov[covbindata$zd.pov > 3.5] <- 3.5
+covbindata$zd.pov[covbindata$zd.pov < -3.5] <- -3.5
+message("Summary of scaled exposure data (percent of bin time as exposure)")
+summary(covbindata$z.expPct_bintime)
+message("Summary of scaled exposure data (percent of stay events within bin)")
+summary(covbindata$z.expPct_binobs)
+message("Summary of scaled exposure data (rate of exposures per hour)")
+summary(covbindata$z.expHourly)
+message("Summary of scaled exposure data (average speed of exposures)")
+summary(covbindata$z.expSpeed_m)
+message("Summary of scaled exposure data (standard deviation of speed of exposures)")
+summary(covbindata$z.expSpeed_sd)
+message("Summary of scaled gini data")
+summary(covbindata$z.gini)
+message("Summary of scaled median income data")
+summary(covbindata$z.medinc)
+message("Summary of scaled % Black population")
+summary(covbindata$z.black) 
+message("Summary of scaled % White population")
+summary(covbindata$z.white) 
+message("Summary of scaled % degree holders")
+summary(covbindata$z.degree) 
+message("Summary of scaled % below poverty")
+summary(covbindata$z.pov) 
+message("Summary of modal exposure data (percent of bin time as exposure)")
+summary(covbindata$zt.expPct_bintime)
+message("Summary of modal exposure data (percent of stay events within bin)")
+summary(covbindata$zt.expPct_binobs)
+message("Summary of modal exposure data (rate of exposures per hour)")
+summary(covbindata$zt.expHourly)
+message("Summary of modal exposure data (average speed of exposures)")
+summary(covbindata$zt.expSpeed_m)
+message("Summary of modal exposure data (standard deviation of speed of exposures)")
+summary(covbindata$zt.expSpeed_sd)
+message("Summary of scaled modal gini")
+summary(covbindata$zt.gini)
+message("Summary of scaled modal median income")
+summary(covbindata$zt.medinc)
+message("Summary of scaled modal % Black population")
+summary(covbindata$zt.black) 
+message("Summary of scaled modal % White population")
+summary(covbindata$zt.white) 
+message("Summary of scaled modal % degree holders")
+summary(covbindata$zt.degree) 
+message("Summary of scaled modal % below poverty")
+summary(covbindata$zt.pov) 
+message("Summary of scaled exposure difference (percent of bin time as exposure)")
+summary(covbindata$zd.expPct_bintime)
+message("Summary of scaled exposure difference (percent of stay events within bin)")
+summary(covbindata$zd.expPct_binobs)
+message("Summary of scaled exposure difference (rate of exposures per hour)")
+summary(covbindata$zd.expHourly)
+message("Summary of scaled exposure difference (average speed of exposures)")
+summary(covbindata$zd.expSpeed_m)
+message("Summary of scaled exposure difference (standard deviation of speed of exposures)")
+summary(covbindata$zd.expSpeed_sd)
+message("Summary of scaled gini difference")
+summary(covbindata$zd.gini)
+message("Summary of scaled median income difference")
+summary(covbindata$zd.medinc)
+message("Summary of scaled difference in % Black population")
+summary(covbindata$zd.black) 
+message("Summary of scaled difference in % White population")
+summary(covbindata$zd.white) 
+message("Summary of scaled difference in % degree holders")
+summary(covbindata$zd.degree) 
+message("Summary of scaled difference in % below poverty")
+summary(covbindata$zd.pov) 
+table(covbindata$pID)
+head(covbindata)
+```
+
+## Pulling in Demographics Data
+
+Here, I repeat a similar process for the participant's demographics data. There are several individual differences I decided not to explore due to low variability in the sample (e.g., everyone smokes in their own homes). Ana has been working on the full GeoScan pilot demographics data file. It should be complete over the summer of 2021.
+
+```{r}
+demodata <- read.csv("~/Box Sync/GeoScanning_Data_822815/Data/demographics.csv", stringsAsFactors = FALSE)
+demodata$WorkTime = NA
+for (r in 1:nrow(demodata)) {
+  if(grepl("n/a|dont|na",demodata$Weekday_Start[r])) {
+    demodata$Weekday_Start[r]=NA
+    demodata$Weekday_Stop[r]=NA
+    next
+  }
+  Day_Start = parse_date_time(demodata$Weekday_Start[r], 'IMS p')
+  Day_Stop = parse_date_time(demodata$Weekday_Stop[r], 'IMS p')
+  demodata$WorkTime[r] = as.numeric(Day_Stop - Day_Start)
+}
+
+demodata_recoded <- demodata %>% 
+  mutate(edu_mother=dplyr::recode(edu_mother, 
+                           `Less than high school` = 1,
+                           `High school graduate (or equivalent)` = 2,
+                           `Some college (1-4 years, no degree)` = 3,
+                           `Associate's degree (including occupational or academic degrees)` = 4,
+                           `Bachelor's degree (BA, BS, etc)` = 5,
+                           `Master's degree (MA, MS, MENG, MSW, etc)` = 6,
+                           `Professional school degree (MD, DDC, JD, etc)` = 7,
+                           `Doctorate degree (PhD, EdD, etc)` = 7), # all advanced degrees coded as 7
+         edu_father=dplyr::recode(edu_father,
+                           `Less than high school` = 1,
+                           `High school graduate (or equivalent)` = 2,
+                           `Some college (1-4 years, no degree)` = 3,
+                           `Associate's degree (including occupational or academic degrees)` = 4,
+                           `Bachelor's degree (BA, BS, etc)` = 5,
+                           `Master's degree (MA, MS, MENG, MSW, etc)` = 6,
+                           `Professional school degree (MD, DDC, JD, etc)` = 7,
+                           `Doctorate degree (PhD, EdD, etc)` = 7),
+         edu_self=dplyr::recode(edu_self,
+                           `Less than high school` = 1,
+                           `High school graduate (or equivalent)` = 2,
+                           `Some college (1-4 years, no degree)` = 3,
+                           `Associate's degree (including occupational or academic degrees)` = 4,
+                           `Bachelor's degree (BA, BS, etc)` = 5,
+                           `Master's degree (MA, MS, MENG, MSW, etc)` = 6,
+                           `Professional school degree (MD, DDC, JD, etc)` = 7,
+                           `Doctorate degree (PhD, EdD, etc)` = 7),
+         cope1=dplyr::recode(cope1,
+                      Never = 1,
+                      Rarely = 2,
+                      Sometimes = 3,
+                      Often = 4,
+                      Always = 5),
+         cope2=dplyr::recode(cope2,
+                      Never = 1,
+                      Rarely = 2,
+                      Sometimes = 3,
+                      Often = 4,
+                      Always = 5),
+         cope3=dplyr::recode(cope3,
+                      `Not at all` = 1,
+                      `A little bit` = 2,
+                      `Somewhat` = 3,
+                      `Quite a bit` = 4,
+                      `Very much` = 5),
+         cope4=dplyr::recode(cope4,
+                      `Not at all` = 1,
+                      `A little bit` = 2,
+                      `Somewhat` = 3,
+                      `Quite a bit` = 4,
+                      `Very much` = 5),
+         Gender.all=dplyr::recode(Gender,
+                           Male = -.5,
+                           Female = .5,
+                           Other = .5), # for this variable, I include other as non-dominant and group with women
+         Gender=dplyr::recode(Gender,
+                       Male = -.5,
+                       Female = .5), # there is one "Other", which is coded as NA here
+         Minority=dplyr::recode(Race,
+                         `White` = -.5,
+                         `Black or African American` = .5,
+                         `Asian` = .5,
+                         `American Indian or Alaska Native` = .5,
+                         `Native Hawaiian or Other Pacific Islander` = .5,
+                         `Other` = .5),
+         Commuter=dplyr::recode(Commuter,
+                         Yes = .5,
+                         No = -.5),
+         #Added variables looking at a few work- and smoking-related variables with decent distributions
+         WorkAway=dplyr::recode(JobStatusT1,
+                         `Don't work` = -.5,
+                         `No` = -.5,
+                         `Yes` = .5),
+         HomeSmoke_Other=dplyr::recode(homesmoke_other,
+                                `Daily`=.5,
+                                `Less than monthly`=-5,
+                                `Never`=-.5,
+                                `Weekly`=-.5)
+         )
+demodata_recoded$edu_parents = rowMeans(demodata_recoded[,c(which(colnames(demodata_recoded)=="edu_mother"),
+                                                            which(colnames(demodata_recoded)=="edu_father"))], na.rm=TRUE)
+demodata_recoded$coping = rowMeans(demodata_recoded[,c(which(colnames(demodata_recoded)=="cope1"),
+                                                       which(colnames(demodata_recoded)=="cope2"),
+                                                       which(colnames(demodata_recoded)=="cope3"),
+                                                       which(colnames(demodata_recoded)=="cope4"))], na.rm=TRUE)
+demodata_recoded$inc_hh_open <- gsub("[^0-9]", "", str_replace(demodata_recoded$inc_hh_open, "[.]00", ""))
+
+# Get ZIP code data from the 2017 ACS
+states_ZIP <- 
+    get_acs(geography = "zip code tabulation area",
+            variables = myACS_Vars, 
+            year = 2017, 
+            #state = c("PA", "NJ", "DE"), # have to request ZIP data nationwide
+            geometry = TRUE,
+            output = "wide") %>%
+  rename(gini_est =  B19083_001E,
+         gini_err = B19083_001M,
+         medinc_est = B19013_001E,
+         medinc_err = B19013_001M,
+         pop_est = B01003_001E, 
+         pop_err = B01003_001M, 
+         popb_est = B02001_003E, 
+         popb_err = B02001_003M,
+         popw_est = B02001_002E, 
+         popw_err = B02001_002M, 
+         povtot_est = B17026_001E,
+         povtot_err = B17026_001M,
+         pov1_est = B17026_002E,
+         pov1_err = B17026_002M,
+         pov2_est = B17026_003E,
+         pov2_err = B17026_003M,
+         pov3_est = B17026_004E,
+         pov3_err = B17026_004M,
+         edutot_est = B15003_001E,
+         edutot_err = B15003_001M,
+         edu4year_est = B15003_022E,
+         edu4year_err = B15003_022M) %>%
+  mutate(pct_black = popb_est/pop_est,
+         pct_white = popw_est/pop_est,
+         below_pov = (pov1_est+pov2_est+pov3_est)/povtot_est,
+         pct_4yd = edu4year_est/edutot_est,
+         GEOID = gsub("NA", "", GEOID),
+         ZIP = substr(GEOID,3,7)) %>%
+  #st_transform(crs = 4326) %>%
+  dplyr::select(GEOID,ZIP,gini_est,medinc_est,pct_black,pct_white,below_pov,pct_4yd)
+
+# Prepare ZIP codes in demodata_recoded and merge
+demodata_recoded$ZIP_childhood <- as.character(demodata_recoded$ZIP_childhood)
+demodata_recoded$ZIP_current <- as.character(demodata_recoded$ZIP_current)
+demodata_recoded$ZIP_childhood[is.na(demodata_recoded$ZIP_childhood)] <- ""
+demodata_recoded$ZIP_current[is.na(demodata_recoded$ZIP_current)] <- ""
+for (r in 1:nrow(demodata_recoded)) {
+  if (nchar(demodata_recoded$ZIP_childhood[r])<5) {
+    demodata_recoded$ZIP_childhood[r] <- paste("0", demodata_recoded$ZIP_childhood[r], sep="") 
+  }
+  if (nchar(demodata_recoded$ZIP_current[r])<5) {
+    demodata_recoded$ZIP_current[r] <- paste("0", demodata_recoded$ZIP_current[r], sep="") 
+  }
+}
+demodata_recoded <- merge(demodata_recoded, states_ZIP, by.x="ZIP_childhood", by.y = "ZIP", all.x = TRUE)
+demodata_recoded <- demodata_recoded %>% rename(gini_est_childhood = gini_est,
+                                                medinc_est_childhood = medinc_est,
+                                                black_est_childhood = pct_black,
+                                                white_est_childhood = pct_white,
+                                                degree_est_childhood = pct_4yd,
+                                                pov_est_childhood = below_pov)
+demodata_recoded <- merge(demodata_recoded, states_ZIP, by.x="ZIP_current", by.y = "ZIP", all.x = TRUE)
+demodata_recoded <- demodata_recoded %>% rename(gini_est_current = gini_est,
+                                                medinc_est_current = medinc_est,
+                                                black_est_current = pct_black,
+                                                white_est_current = pct_white,
+                                                degree_est_current = pct_4yd,
+                                                pov_est_current = below_pov)
+
+#Scale and winsorize
+demodata_recoded$z.coping = scale(demodata_recoded$coping)
+demodata_recoded$z.ladder = scale(demodata_recoded$ladder)
+demodata_recoded$z.edu_parents = scale(demodata_recoded$edu_parents)
+demodata_recoded$z.edu_self = scale(demodata_recoded$edu_self)
+#demodata_recoded$z.inc_hh_open = scale(as.numeric(demodata_recoded$inc_hh_open)) #not much data, and we have weird values
+demodata_recoded$z.age = scale(demodata_recoded$Age)
+demodata_recoded$z.gini_est_childhood = scale(demodata_recoded$gini_est_childhood)
+demodata_recoded$z.gini_est_current = scale(demodata_recoded$gini_est_current)
+demodata_recoded$z.medinc_est_childhood = scale(demodata_recoded$medinc_est_childhood)
+demodata_recoded$z.medinc_est_current = scale(demodata_recoded$medinc_est_current)
+demodata_recoded$z.black_est_childhood = scale(demodata_recoded$black_est_childhood)
+demodata_recoded$z.black_est_current = scale(demodata_recoded$black_est_current)
+demodata_recoded$z.white_est_childhood = scale(demodata_recoded$white_est_childhood)
+demodata_recoded$z.white_est_current = scale(demodata_recoded$white_est_current)
+demodata_recoded$z.degree_est_childhood = scale(demodata_recoded$degree_est_childhood)
+demodata_recoded$z.degree_est_current = scale(demodata_recoded$degree_est_current)
+demodata_recoded$z.pov_est_childhood = scale(demodata_recoded$pov_est_childhood)
+demodata_recoded$z.pov_est_current = scale(demodata_recoded$pov_est_current)
+demodata_recoded$z.worktime = scale(demodata$WorkTime)
+
+demodata_recoded$z.coping[demodata_recoded$z.coping > 3.5] = 3.5
+demodata_recoded$z.coping[demodata_recoded$z.coping < -3.5] = -3.5
+demodata_recoded$z.ladder[demodata_recoded$z.ladder > 3.5] = 3.5
+demodata_recoded$z.ladder[demodata_recoded$z.ladder < -3.5] = -3.5
+demodata_recoded$z.edu_parents[demodata_recoded$z.edu_parents > 3.5] = 3.5
+demodata_recoded$z.edu_parents[demodata_recoded$z.edu_parents < -3.5] = -3.5
+demodata_recoded$z.edu_self[demodata_recoded$z.edu_self > 3.5] = 3.5
+demodata_recoded$z.edu_self[demodata_recoded$z.edu_self < -3.5] = -3.5
+demodata_recoded$z.age[demodata_recoded$z.age > 3.5] = 3.5
+demodata_recoded$z.age[demodata_recoded$z.age < -3.5] = -3.5
+demodata_recoded$z.gini_est_childhood[demodata_recoded$z.gini_est_childhood > 3.5] = 3.5
+demodata_recoded$z.gini_est_childhood[demodata_recoded$z.gini_est_childhood < -3.5] = -3.5
+demodata_recoded$z.gini_est_current[demodata_recoded$z.gini_est_current > 3.5] = 3.5
+demodata_recoded$z.gini_est_current[demodata_recoded$z.gini_est_current < -3.5] = -3.5
+demodata_recoded$z.medinc_est_childhood[demodata_recoded$z.medinc_est_childhood > 3.5] = 3.5
+demodata_recoded$z.medinc_est_childhood[demodata_recoded$z.medinc_est_childhood < -3.5] = -3.5
+demodata_recoded$z.medinc_est_current[demodata_recoded$z.medinc_est_current > 3.5] = 3.5
+demodata_recoded$z.medinc_est_current[demodata_recoded$z.medinc_est_current < -3.5] = -3.5
+demodata_recoded$z.worktime[demodata_recoded$z.worktime > 3.5] = 3.5
+demodata_recoded$z.worktime[demodata_recoded$z.worktime < -3.5] = -3.5
+demodata_recoded$z.black_est_childhood[demodata_recoded$z.black_est_childhood > 3.5] = 3.5
+demodata_recoded$z.black_est_childhood[demodata_recoded$z.black_est_childhood < -3.5] = -3.5
+demodata_recoded$z.black_est_current[demodata_recoded$z.black_est_current > 3.5] = 3.5
+demodata_recoded$z.black_est_current[demodata_recoded$z.black_est_current < -3.5] = -3.5
+demodata_recoded$z.white_est_childhood[demodata_recoded$z.white_est_childhood > 3.5] = 3.5
+demodata_recoded$z.white_est_childhood[demodata_recoded$z.white_est_childhood < -3.5] = -3.5
+demodata_recoded$z.white_est_current[demodata_recoded$z.white_est_current > 3.5] = 3.5
+demodata_recoded$z.white_est_current[demodata_recoded$z.white_est_current < -3.5] = -3.5
+demodata_recoded$z.degree_est_childhood[demodata_recoded$z.degree_est_childhood > 3.5] = 3.5
+demodata_recoded$z.degree_est_childhood[demodata_recoded$z.degree_est_childhood < -3.5] = -3.5
+demodata_recoded$z.degree_est_current[demodata_recoded$z.degree_est_current > 3.5] = 3.5
+demodata_recoded$z.degree_est_current[demodata_recoded$z.degree_est_current < -3.5] = -3.5
+demodata_recoded$z.pov_est_childhood[demodata_recoded$z.pov_est_childhood > 3.5] = 3.5
+demodata_recoded$z.pov_est_childhood[demodata_recoded$z.pov_est_childhood < -3.5] = -3.5
+demodata_recoded$z.pov_est_current[demodata_recoded$z.pov_est_current > 3.5] = 3.5
+demodata_recoded$z.pov_est_current[demodata_recoded$z.pov_est_current < -3.5] = -3.5
+
+#Select and merge with main dataframe
+demomerge <- demodata_recoded %>% dplyr::select(pID, z.ladder, z.coping, z.edu_parents, z.edu_self, z.age, z.gini_est_childhood, z.gini_est_current, z.medinc_est_childhood, z.medinc_est_current, z.worktime, Gender, Gender.all, Minority, Commuter, WorkAway, HomeSmoke_Other, z.black_est_current, z.black_est_childhood, z.white_est_current, z.white_est_childhood, z.degree_est_current, z.degree_est_childhood, z.pov_est_childhood, z.pov_est_current)
+covbindata <- merge(covbindata, demomerge, by.x = "filename", by.y = "pID", all.x = TRUE)
+head(covbindata)
+```
+
+## Export Data for Analysis
+
+Saving R workspace for analysis: This takes some time.
+
+```{r}
+# Older workspaces
+#save.image("/Volumes/cnlab/GeoScan/Pilot_Analyses/Workspaces/Analyses/CensusAnalyses_15.10.20.RData")
+#save.image("/Volumes/cnlab/GeoScan/Pilot_Analyses/Workspaces/Analyses/ExposureAnalyses_1.11.20.RData")
+#save.image("/Volumes/cnlab/GeoScan/Pilot_Analyses/Workspaces/Analyses/AllAnalyses_1.1.21.RData")
+
+# Workspaces with updated functions and more defined retailer buffers
+#save.image("/Volumes/cnlab/GeoScan/Pilot_Analyses/Workspaces/Analyses/AllAnalyses_25ft_1.1.21.RData")
+#save.image("/Volumes/cnlab/GeoScan/Pilot_Analyses/Workspaces/Analyses/AllAnalyses_100ft_1.1.21.RData")
+
+# Workspaces with updated functions and updated retailer exposure parameters (at different buffer radii)
+#save.image("/Volumes/cnlab/GeoScan/Pilot_Analyses/Workspaces/Analyses/AllAnalyses_100ft_1.19.21.RData")
+#save.image("/Volumes/cnlab/GeoScan/Pilot_Analyses/Workspaces/Analyses/AllAnalyses_25ft_1.19.21.RData")
+#save.image("/Volumes/cnlab/GeoScan/Pilot_Analyses/Workspaces/Analyses/AllAnalyses_100ft_2.11.21.RData") # improved retailer exposure calculation, corrected 2018 bug, dropped last two weeks of GEO053
+
+# Final workspace from Brad
+save.image("/Volumes/cnlab/GeoScan/Pilot_Analyses/Workspaces/Analyses/AllAnalyses_100ft_6.16.21.RData")
+```
+
+## Notes to Future Self and/or Analysts
+
+Look up Gina South biostatistician with interests in equity and public health, faculty director of the urban health lab in emergency medicine.
+
+Load the final workspace saved in the preceding code block.
+
+For an analysis template and a bunch of old code that I used to analyze previous iterations of the pilot data, see ~/Box Sync/GeoScanning_Data_822815/Data/Scripts/Analysis_Template_6.17.21.Rmd

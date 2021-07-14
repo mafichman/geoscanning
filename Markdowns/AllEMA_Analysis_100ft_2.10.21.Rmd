@@ -139,10 +139,9 @@ palette <- c("#10142A", "#47E9B9", "#F55D60", "#71EA48", "#C148EA", "EAC148" )
 
 For spatial joins of geotracking information to census geographies (and census demographic data), one can use the tidycensus package, but only with a key or token from the US Census Bureau.
 
-The key below is registered to Brad Mattan, Communication Neuroscience Lab, University of Pennyslvania.
 
 ```{r}
-census_api_key("25395b90daf32a638370daaf8aeb1ef214ff4e70", overwrite = TRUE)
+census_api_key(, overwrite = TRUE)
 ```
 
 ## Set Working Directory and Load Data
