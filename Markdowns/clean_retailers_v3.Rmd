@@ -133,7 +133,7 @@ This is a geocoding-intensive project, with thousands of observations requiring 
 You can get your own key by signing up for a google developer account, which gets you a 300 dollar starting credit. A thousand requests cost 5 dollars. This should be sufficient.
 
 If you are running this codebase, consult with me for my API key, or get your own.
-
+ 
 Information about using the ggmap package and the google API can be found at the ['r-bloggers'](https://www.r-bloggers.com/geocoding-with-ggmap-and-the-google-api/) site. You can follow that link to get your own account started.
 
 Begin by registering your key with the `ggmap` function `register_google`
