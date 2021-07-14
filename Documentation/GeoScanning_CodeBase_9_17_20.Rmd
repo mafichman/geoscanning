@@ -896,7 +896,7 @@ You can get your own key quickly via this [link](https://api.census.gov/data/key
 
 ```{r census_api, message=FALSE, warning=FALSE, cache=TRUE, include=FALSE, results='hide'}
 # Install Census API Key
-census_api_key("e79f3706b6d61249968c6ce88794f6f556e5bf3d", overwrite = TRUE)
+census_api_key("", overwrite = TRUE)
 ```
 
 ```{r census_api, message=FALSE, warning=FALSE, cache=TRUE,  eval = FALSE}
