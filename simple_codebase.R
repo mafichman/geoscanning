@@ -50,6 +50,9 @@ source("R/removeDuplicates.R")
 
 # Output is an sf object
 
+cleanData <- uploadGeodata("/Volumes/cnlab/GeoRemote/Timeline/2_S2/GR019_S2_Takeout/Location\ History") %>%
+  cleanDates(., "2022-07-07 21:30:45", "2022-07-22 15:17:47", addFlags = FALSE, "Records.json")
+
 cleanData <- uploadGeodata("Data/Geotracking/multi_json_test") %>%
   cleanDates(., "2019-04-22 21:30:45", "2019-08-05 15:17:47", addFlags = FALSE, "file1.json") %>% # parameter
   cleanDates(., "2019-04-22 21:30:45", "2019-08-05 15:17:47", addFlags = FALSE, "file2.json") %>% # parameter
