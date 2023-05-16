@@ -62,7 +62,7 @@ retailers_Socrata_de <- read.socrata("https://data.delaware.gov/resource/5zy2-gr
   mutate(zip = ifelse(str_length(zip) == 9, str_sub(zip, end = -5), zip)) %>%
   filter(zip >= 19701 & zip <= 19980) %>%
   unite(., "address_full", sep = " ",
-        c("address_2", "city", "state", "zip")) %>%
+        c("address_1", "city", "state", "zip")) %>%
   mutate(state = "DE") %>%
   dplyr::select(-business_name, -current_license_valid_from, 
                 -current_license_valid_to, -country, -geocoded_location.human_address,
