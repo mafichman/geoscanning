@@ -65,8 +65,7 @@ retailers_Socrata_de <- read.socrata("https://data.delaware.gov/resource/5zy2-gr
         c("address_1", "city", "state", "zip")) %>%
   mutate(state = "DE") %>%
   dplyr::select(-business_name, -current_license_valid_from, 
-                -current_license_valid_to, -country, -geocoded_location.human_address,
-                -address_1) %>%
+                -current_license_valid_to, -country, -geocoded_location.human_address, -address_2) %>%
   mutate_if(is.factor, as.character) %>%
   mutate(address_full = str_replace(address_full, "&", "AND"))
 
@@ -132,9 +131,12 @@ errors_de <- st_join(geocoded_de %>%
 
 # Manually fix bad geocodes
 
-geocoded_de_fixed <- geocoded_de %>%
-  mutate(lat = ifelse(account == "2005208433", 39.64222847614057, lat),
-         lon = ifelse(account == "2005208433", -75.64473202156881, lon))
+#geocoded_de_fixed <- geocoded_de %>%
+#  mutate(lat = ifelse(account == "2005208433", 39.64222847614057, lat),
+#         lon = ifelse(account == "2005208433", -75.64473202156881, lon))
+
+# If there are no bad geocodes (aka no observations in errors_de), do this:
+# geocoded_de_fixed <- geocoded_de
 
 # Put all the data back together
 
@@ -147,4 +149,4 @@ allStates_updated <- read.csv("~/GitHub/geoscanning/Data/Retailers/all_Retailers
   filter(state != "DE") %>%
   rbind(., geocoded_de_fixed)
 
-write.csv(allStates_updated, "~/GitHub/geoscanning/Data/Retailers/all_Retailers_5_26_21.csv")
+write.csv(allStates_updated, "~/GitHub/geoscanning/Data/Retailers/all_Retailers_8_23_23.csv")
