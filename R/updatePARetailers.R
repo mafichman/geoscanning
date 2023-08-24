@@ -59,7 +59,7 @@ retailers_Socrata_pa <- read.socrata("https://data.pa.gov/resource/ut72-sft8.jso
 
 # Load stored retailer database, filter for only PA observations
 
-stored_pa <- read.csv("~/GitHub/geoscanning/Data/Retailers/all_Retailers_5_20_21.csv") %>%
+stored_pa <- read.csv("~/GitHub/geoscanning/Data/Retailers/all_Retailers_8_23_23.csv") %>%
   dplyr::select(canonical_names) %>%
   mutate_if(is.factor, as.character) %>%
   mutate(expiration_date = ymd(expiration_date),
@@ -121,22 +121,27 @@ errors_pa <- st_join(geocoded_pa %>%
 # Manually geocode failures
 
 geocoded_pa_fixed <- geocoded_pa %>%
-  mutate(lat = ifelse(account %in% c("02**1873", "33**3114"), NA, lat),
-         lon = ifelse(account %in% c("02**1873", "33**3114"), NA, lon)) %>%
-  mutate(lat = ifelse(account == "70**5157", 42.074211070532854,  lat),
-         lon = ifelse(account == "70**5157", -80.14327133127297, lon)) %>%
-  mutate(lat = ifelse(account %in% c("25**1938", "25**8306"), 42.210053022150504,   lat),
-         lon = ifelse(account %in% c("25**1938", "25**8306"), -79.84988587711423, lon)) %>%
-  mutate(lat = ifelse(account == "09**0009", 40.12615975272745,  lat),
-         lon = ifelse(account == "09**0009", -74.83672149886412,  lon)) %>%
-  mutate(lat = ifelse(account == "40**3538", 41.33283809763932,  lat),
-         lon = ifelse(account == "40**3538", -75.95459226289694,  lon)) %>%
-  mutate(lat = ifelse(account == "09**2991", 40.10934146246511,   lat),
-         lon = ifelse(account == "09**2991", -74.95117508837193,  lon))
+  filter(account != "02**1873") %>%
+  filter(account != "33**3114") %>%
+  filter(account != "35**7799") %>%
+  mutate(lat = ifelse(account == "16**0807", 41.468515613988465,  lat),
+         lon = ifelse(account == "16**0807", -79.12372917559753, lon)) %>%
+  mutate(lat = ifelse(account == "63**7782", 40.16699955076244,   lat),
+         lon = ifelse(account == "63**7782", -80.24430838571557,  lon)) %>%
+  mutate(lat = ifelse(account == "35**7799", 41.74080916031694,   lat),
+         lon = ifelse(account == "35**7799", -75.56718174860241,  lon)) %>%
+  mutate(lat = ifelse(account == "65**7908", 40.3239210978667,    lat),
+         lon = ifelse(account == "65**7908", -79.7831475416391,  lon)) %>%
+  mutate(lat = ifelse(account == "16**0807", 41.4688774463019,     lat),
+         lon = ifelse(account == "16**0807", -79.12440384861141,  lon)) %>%
+  mutate(lat = ifelse(account == "09**4700", 40.347279148269656,     lat),
+         lon = ifelse(account == "09**4700", -75.02938210077026,  lon)) %>%
+  mutate(lat = ifelse(account == "63**7797",40.18655981120521,     lat),
+         lon = ifelse(account == "63**7797", -80.0551870119752,  lon))
 
 # Append to the rest of the retailers and write it out
 
-allStates_updated <- read.csv("~/GitHub/geoscanning/Data/Retailers/all_Retailers_5_20_21.csv") %>%
+allStates_updated <- read.csv("~/GitHub/geoscanning/Data/Retailers/all_Retailers_8_23_23.csv") %>%
   dplyr::select(canonical_names) %>%
   mutate_if(is.factor, as.character) %>%
   mutate(account = as.character(account)) %>%
@@ -145,4 +150,4 @@ allStates_updated <- read.csv("~/GitHub/geoscanning/Data/Retailers/all_Retailers
   filter(state != "PA") %>%
   rbind(., geocoded_pa_fixed)
 
-write.csv(allStates_updated, "~/GitHub/geoscanning/Data/Retailers/all_Retailers_5_26_21.csv")
+write.csv(allStates_updated, "~/GitHub/geoscanning/Data/Retailers/all_Retailers_8_24_23.csv")
