@@ -76,7 +76,7 @@ retailers_Socrata_de <- read.socrata("https://data.delaware.gov/resource/5zy2-gr
 ## rename the columns and then unnest the lat/lon data
 ## You also will notice that the date parsing is in mdy, not ymd
 
-retailers_Socrata_de <- read.csv("~/GitHub/geoscanning/Data/Retailers/DE/11_14_22_Delaware_Business_Licenses.csv") %>%
+retailers_Socrata_de <- read.csv("~/GitHub/geoscanning/Data/Retailers/DE/08_17_23_Delaware_Business_Licenses.csv") %>%
   rename(current_license_valid_from = Current.license.valid.from,
          business_name = Business.name,
          trade_name = Trade.name,
@@ -121,7 +121,7 @@ retailers_Socrata_de <- read.csv("~/GitHub/geoscanning/Data/Retailers/DE/11_14_2
 
 # Load stored data
 
-stored_de <- read.csv("~/GitHub/geoscanning/Data/Retailers/all_Retailers_8_30_23_10_13_22.csv") %>%
+stored_de <- read.csv("~/GitHub/geoscanning/Data/Retailers/all_Retailers_8_30_23_07_10_23.csv") %>%
   dplyr::select(canonical_names) %>%
   mutate_if(is.factor, as.character) %>%
   mutate(expiration_date = ymd(expiration_date),
@@ -150,6 +150,8 @@ joined_de <- full_join(stored_de,
 
 to_geocode_de <- joined_de %>%
   filter(is.na(lat) == TRUE)
+
+# If to_geocode_de is longer than 0 observations, do the following-
 
 geocoded_de <- geocode(to_geocode_de$address_full, source =  "google") %>%
   cbind(., to_geocode_de %>%
@@ -187,11 +189,11 @@ errors_de <- st_join(geocoded_de %>%
 #         lon = ifelse(account == "2005208433", -75.64473202156881, lon))
 
 # If there are no bad geocodes (aka no observations in errors_de), do this:
-# geocoded_de_fixed <- geocoded_de
+geocoded_de_fixed <- geocoded_de
 
 # Put all the data back together
 
-allStates_updated <- read.csv("~/GitHub/geoscanning/Data/Retailers/all_Retailers_8_30_23_10_13_22.csv") %>%
+allStates_updated <- read.csv("~/GitHub/geoscanning/Data/Retailers/all_Retailers_8_30_23_07_10_23.csv") %>%
   dplyr::select(canonical_names) %>%
   mutate_if(is.factor, as.character) %>%
   mutate(account = as.character(account)) %>%
@@ -200,4 +202,4 @@ allStates_updated <- read.csv("~/GitHub/geoscanning/Data/Retailers/all_Retailers
   filter(state != "DE") %>%
   rbind(., geocoded_de_fixed)
 
-write.csv(allStates_updated, "~/GitHub/geoscanning/Data/Retailers/all_Retailers_8_30_23_11_14_22.csv")
+write.csv(allStates_updated, "~/GitHub/geoscanning/Data/Retailers/all_Retailers_8_30_23_08_17_23.csv")
