@@ -46,6 +46,9 @@ de_shp <- states_shp %>%
 
 ## NOTE THAT THE cateogries have changed for how they describe tobacco retailers!
 
+## Alternative - if you are reading data from file, go down to the next file chunk and run that instead - downloaded csvs
+## are formatted a bit differently from the jsons you get from the Delaware API
+
 retailers_Socrata_de <- read.socrata("https://data.delaware.gov/resource/5zy2-grhr.json") %>%
   filter(str_detect(category, "CIGARETTE/TOBACCO PRODUCTS SELLER") | 
            str_detect(category, "TOBACCO RETAILER")) %>%
@@ -69,9 +72,56 @@ retailers_Socrata_de <- read.socrata("https://data.delaware.gov/resource/5zy2-gr
   mutate_if(is.factor, as.character) %>%
   mutate(address_full = str_replace(address_full, "&", "AND"))
 
+## If the data are being read in from a csv file of business licenses, use this code instead - you have to
+## rename the columns and then unnest the lat/lon data
+## You also will notice that the date parsing is in mdy, not ymd
+
+retailers_Socrata_de <- read.csv("~/GitHub/geoscanning/Data/Retailers/DE/11_14_22_Delaware_Business_Licenses.csv") %>%
+  rename(current_license_valid_from = Current.license.valid.from,
+         business_name = Business.name,
+         trade_name = Trade.name,
+         category = Business.Activity,
+         current_license_valid_from = Current.license.valid.from,
+         current_license_valid_to = Current.license.valid.to,
+         address_1 = Address.1,
+         address_2 = Address.2,
+         city = City,
+         state = State,
+         zip = Zip,
+         country = Country,
+         license_number = License.number,
+         geocoded_location.human_address = Geocoded.Location) %>%
+   mutate(coordinates = str_extract(geocoded_location.human_address, "\\((-?[0-9.]+), (-?[0-9.]+)\\)")) %>%
+  separate(coordinates, into = c("latitude", "longitude"), sep = ",\\s*", convert = TRUE) %>%
+  mutate(lat = str_remove(latitude, "\\("),
+         lon = str_remove(longitude, "\\)")) %>%
+  filter(str_detect(category, "CIGARETTE/TOBACCO PRODUCTS SELLER") | 
+           str_detect(category, "TOBACCO RETAILER")) %>%
+  mutate(publish_date = mdy(current_license_valid_from),
+         expiration_date = mdy(current_license_valid_to),
+         expired_y_n = "ACTIVE",
+         trade_name = business_name,
+         county = NA,
+         state = "DE") %>%
+  rename(account = license_number,
+         license_type = category) %>%
+  mutate(zip = ifelse(str_length(zip) == 9, str_sub(zip, end = -5), zip)) %>%
+  filter(zip >= 19701 & zip <= 19980) %>%
+  unite(., "address_full", sep = " ",
+        c("address_1", "city", "state", "zip")) %>%
+  mutate(state = "DE") %>%
+  dplyr::select(-business_name, -current_license_valid_from, -latitude, -longitude,
+                -current_license_valid_to, -country, -geocoded_location.human_address, -address_2) %>%
+  mutate_if(is.factor, as.character) %>%
+  mutate_if(is.integer, as.character) %>%
+  mutate(address_full = str_replace(address_full, "&", "AND"))
+  
+
+
+
 # Load stored data
 
-stored_de <- read.csv("~/GitHub/geoscanning/Data/Retailers/all_Retailers_5_26_21.csv") %>%
+stored_de <- read.csv("~/GitHub/geoscanning/Data/Retailers/all_Retailers_8_30_23_10_13_22.csv") %>%
   dplyr::select(canonical_names) %>%
   mutate_if(is.factor, as.character) %>%
   mutate(expiration_date = ymd(expiration_date),
@@ -109,10 +159,11 @@ geocoded_de <- geocode(to_geocode_de$address_full, source =  "google") %>%
 
 summary(is.na(geocoded_de$lat))
 
-# There are no NA observations, so we do this
+# If there are no NA observations, we do this
 geocoded_de <- joined_de
 
 # Check for bad geocodes
+# If you get observations here, look into them to see what they are - you might need to manually input lat/lon
 
 errors_de <- st_join(geocoded_de %>% 
                        filter(is.na(lat) == FALSE) %>% 
@@ -140,7 +191,7 @@ errors_de <- st_join(geocoded_de %>%
 
 # Put all the data back together
 
-allStates_updated <- read.csv("~/GitHub/geoscanning/Data/Retailers/all_Retailers_5_26_21.csv") %>%
+allStates_updated <- read.csv("~/GitHub/geoscanning/Data/Retailers/all_Retailers_8_30_23_10_13_22.csv") %>%
   dplyr::select(canonical_names) %>%
   mutate_if(is.factor, as.character) %>%
   mutate(account = as.character(account)) %>%
@@ -149,4 +200,4 @@ allStates_updated <- read.csv("~/GitHub/geoscanning/Data/Retailers/all_Retailers
   filter(state != "DE") %>%
   rbind(., geocoded_de_fixed)
 
-write.csv(allStates_updated, "~/GitHub/geoscanning/Data/Retailers/all_Retailers_8_23_23.csv")
+write.csv(allStates_updated, "~/GitHub/geoscanning/Data/Retailers/all_Retailers_8_30_23_11_14_22.csv")
