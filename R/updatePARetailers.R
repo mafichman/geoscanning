@@ -57,9 +57,41 @@ retailers_Socrata_pa <- read.socrata("https://data.pa.gov/resource/ut72-sft8.jso
   mutate_if(is.factor, as.character) %>%
   mutate(address_full = str_replace(address_full, "&", "AND"))
 
+## If you are loading data from file, you can use the following code:
+# Make sure to change the input date to be the date of DL for the data set
+
+retailers_Socrata_pa <- read.csv("~/GitHub/geoscanning/Data/Retailers/PA/2022_10/Tobacco_Products_Tax_Licenses_Current_Monthly_County_Revenue.csv") %>%
+  rename(county = County,
+         legal_name = Legal.Name,
+         trade_name = Trade.Name,
+         postal_code = Postal.Code,
+         country = Country,
+         account = Account.Code,
+         license_type = License.Type,
+         expiration_date = Expiration.Date,
+         location_1.human_address = Address...Lat.Long) %>%
+  filter(county != "UNKNOWN/OUT OF STATE",
+         license_type != "Vending") %>%
+  mutate(coordinates = str_extract(location_1.human_address, "\\((-?[0-9.]+), (-?[0-9.]+)\\)")) %>%
+  separate(coordinates, into = c("latitude", "longitude"), sep = ",\\s*", convert = TRUE) %>%
+  mutate(lat = str_remove(latitude, "\\("),
+         lon = str_remove(longitude, "\\)")) %>%
+  mutate(cleaned_text = str_replace_all(location_1.human_address, "\n", " ")) %>%
+  mutate(cleaned_text = str_remove_all(cleaned_text, "\\(.*?\\)")) %>%
+  separate(cleaned_text, into = c("address"), sep = "\\s{2,}", extra = "drop") %>%
+  dplyr::select(-legal_name, -postal_code, -country,
+                -latitude, -longitude, -location_1.human_address) %>%
+  mutate(publish_date = ymd("2022-10-01"),
+         state = "PA",
+         expiration_date = mdy(expiration_date)) %>%
+  rename(address_full = address) %>%
+  mutate_if(is.factor, as.character) %>%
+  mutate(address_full = str_replace(address_full, "&", "AND"))
+
+
 # Load stored retailer database, filter for only PA observations
 
-stored_pa <- read.csv("~/GitHub/geoscanning/Data/Retailers/all_Retailers_8_23_23.csv") %>%
+stored_pa <- read.csv("~/GitHub/geoscanning/Data/Retailers/all_Retailers_8_30_23_2022_09.csv") %>%
   dplyr::select(canonical_names) %>%
   mutate_if(is.factor, as.character) %>%
   mutate(expiration_date = ymd(expiration_date),
@@ -76,7 +108,7 @@ joined_pa <- full_join(stored_pa,
          lon = ifelse(is.na(lon.x) == FALSE, lon.x, lon.y),
          address_full = ifelse(is.na(address_full.x) == FALSE, address_full.x, address_full.y),
          county = ifelse(is.na(county.y) == TRUE, county.x, county.y),
-         publish_date = if_else(is.na(publish_date.y) == TRUE, publish_date.x, publish_date.y),
+         publish_date = if_else(is.na(publish_date.x) == TRUE, publish_date.y, publish_date.x),
          license_type = ifelse(is.na(license_type.y) == TRUE, license_type.x, license_type.y),
          state = "PA") %>%
   dplyr::select(-lat.x, -lon.x, -lat.y, -lon.y, 
@@ -120,28 +152,25 @@ errors_pa <- st_join(geocoded_pa %>%
 
 # Manually geocode failures
 
+# the filters are for retailers or manufacturers not in PA, the mutates are for lat/lon failures for places in PA
+
 geocoded_pa_fixed <- geocoded_pa %>%
   filter(account != "02**1873") %>%
   filter(account != "33**3114") %>%
-  filter(account != "35**7799") %>%
-  mutate(lat = ifelse(account == "16**0807", 41.468515613988465,  lat),
-         lon = ifelse(account == "16**0807", -79.12372917559753, lon)) %>%
-  mutate(lat = ifelse(account == "63**7782", 40.16699955076244,   lat),
-         lon = ifelse(account == "63**7782", -80.24430838571557,  lon)) %>%
-  mutate(lat = ifelse(account == "35**7799", 41.74080916031694,   lat),
-         lon = ifelse(account == "35**7799", -75.56718174860241,  lon)) %>%
-  mutate(lat = ifelse(account == "65**7908", 40.3239210978667,    lat),
-         lon = ifelse(account == "65**7908", -79.7831475416391,  lon)) %>%
-  mutate(lat = ifelse(account == "16**0807", 41.4688774463019,     lat),
-         lon = ifelse(account == "16**0807", -79.12440384861141,  lon)) %>%
-  mutate(lat = ifelse(account == "09**4700", 40.347279148269656,     lat),
-         lon = ifelse(account == "09**4700", -75.02938210077026,  lon)) %>%
-  mutate(lat = ifelse(account == "63**7797",40.18655981120521,     lat),
-         lon = ifelse(account == "63**7797", -80.0551870119752,  lon))
+  filter(account != "63**8422") %>%
+  filter(account != "32**8418") %>%
+  filter(account != "64**8393") %>%
+  filter(account != "28**0275") %>%
+  filter(account != "06**4558") %>%
+  filter(account != "24**8466") %>%
+  filter(account != "22**8558") 
+ # mutate(lat = ifelse(account == "09**4700", 40.34727097145478,    lat),
+  #       lon = ifelse(account == "09**4700", -75.02946793145549, lon))
+  
 
 # Append to the rest of the retailers and write it out
 
-allStates_updated <- read.csv("~/GitHub/geoscanning/Data/Retailers/all_Retailers_8_23_23.csv") %>%
+allStates_updated <- read.csv("~/GitHub/geoscanning/Data/Retailers/all_Retailers_8_30_23_2022_09.csv") %>%
   dplyr::select(canonical_names) %>%
   mutate_if(is.factor, as.character) %>%
   mutate(account = as.character(account)) %>%
@@ -150,4 +179,4 @@ allStates_updated <- read.csv("~/GitHub/geoscanning/Data/Retailers/all_Retailers
   filter(state != "PA") %>%
   rbind(., geocoded_pa_fixed)
 
-write.csv(allStates_updated, "~/GitHub/geoscanning/Data/Retailers/all_Retailers_8_24_23.csv")
+write.csv(allStates_updated, "~/GitHub/geoscanning/Data/Retailers/all_Retailers_8_30_23_2022_10.csv")
