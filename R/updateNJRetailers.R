@@ -44,7 +44,7 @@ de_shp <- states_shp %>%
 
 # Load stored retailer database, filter for only NJ observations
 
-stored_nj <- read.csv("~/GitHub/geoscanning/Data/Retailers/all_Retailers_10_20_20.csv") %>%
+stored_nj <- read.csv("~/GitHub/geoscanning/Data/Retailers/all_Retailers_DE_8_2023_PA_8_2023_NJ_2022err.csv") %>%
   dplyr::select(canonical_names) %>%
   mutate_if(is.factor, as.character) %>%
   mutate(expiration_date = ymd(expiration_date),
@@ -53,19 +53,30 @@ stored_nj <- read.csv("~/GitHub/geoscanning/Data/Retailers/all_Retailers_10_20_2
 
 # Load new data, impute expiration date, pub date and acount numbers
 
-retailers_new_NJ <- read_excel("~/GitHub/geoscanning/Data/Retailers/NJ/NJ Cigarette Retailers 2021 (OPRA C172455).xlsx", skip = 2)  %>%
-  mutate(Zip = ifelse(str_length(Zip) == 9, str_sub(Zip, end = -5), Zip))%>%
+# Load the data in, skip the correct number of lines in the excel sheet
+# The column names change every year, so rename them
+# The zip code should be 9 digits, zips in NJ start with a zero - pad them with a zero if 8 digits
+# Take only the first five digits
+# Unite the street/city/state/zip for geocoding
+
+retailers_new_NJ <- read_excel("~/GitHub/geoscanning/Data/Retailers/NJ/NJ Cigarette Retailers 2023 (OPRA W199431).xlsx", skip = 2)  %>%
+  rename(trade_name = TRADE,
+         Street = 'STREET ADDRESS',
+         City = CITY,
+         State = STATE,
+         Zip = ZIP) %>% 
+  mutate(Zip = str_pad(Zip, width = 9, side = "left", pad = "0")) %>%
+  mutate(Zip = ifelse(str_length(Zip) == 9, str_sub(Zip, end = -5), Zip)) %>%
   unite(., "address_full", sep = ", ",
         c("Street", "City", "State", "Zip")) %>%
   mutate(address_full = str_replace(address_full, "&", "AND"))%>%
   mutate(expired_y_n = "ACTIVE", 
-         expiration_date = ymd("2022-03-31"),  # is this correct?
-         publish_date = ymd("2021-04-01"),
-         account = str_c("NJ_21", row_number(), sep = "_"), 
+         expiration_date = ymd("2024-03-31"),  # is this correct?
+         publish_date = ymd("2023-04-01"),
+         account = str_c("NJ_22", row_number(), sep = "_"), 
          license_type = NA, county = NA,
          state = "NJ",
-         Trade = ifelse(is.na(Trade) == TRUE, Name, Trade)) %>% 
-  rename(trade_name = Trade) %>% 
+         trade_name = ifelse(is.na(trade_name) == TRUE, Name, trade_name)) %>% 
   dplyr::select(-Name)
 
 # Join new and old retailers
@@ -117,16 +128,25 @@ errors_nj <- st_join(geocoded_nj %>%
   as.data.frame() %>%
   dplyr::select(-geometry) %>%
   rbind(., geocoded_nj %>%
-          filter(is.na(lat) == TRUE)%>%
+          filter(is.na(lat) == TRUE |
+                   address_full == "NA, NA, NJ, 00000" |
+                   address_full == "NA, NA, NA, NA, 00000")%>%
           dplyr::select(canonical_names))
+
 
 summary(is.na(errors_nj$lat))
 
 nrow(errors_nj)
 
+# Throw away data not in NJ
+
+errors_nj <- errors_nj %>%
+  filter(is.na(lat) == TRUE)
+
+
 # Write out errors
 
-write.csv(errors_nj, "filepath goes here")
+write.csv(errors_nj, "~/GitHub/geoscanning/Data/Retailers/NJ/geocoding_errors/errors_nj_2023.csv")
 
 # Manually geocode failures
 
@@ -162,7 +182,7 @@ geocoded_nj_fixed <- geocoded_nj %>%
 
 # Append to the rest of the retailers and write it out
 
-allStates_updated <- read.csv("~/GitHub/geoscanning/Data/Retailers/all_Retailers_10_20_20.csv") %>%
+allStates_updated <- read.csv("~/GitHub/geoscanning/Data/Retailers/all_Retailers_DE_8_2023_PA_8_2023_NJ_2022err.csv") %>%
   dplyr::select(canonical_names) %>%
   mutate_if(is.factor, as.character) %>%
   mutate(account = as.character(account)) %>%
@@ -171,4 +191,4 @@ allStates_updated <- read.csv("~/GitHub/geoscanning/Data/Retailers/all_Retailers
   filter(state != "NJ") %>%
   rbind(., geocoded_nj_fixed)
 
-write.csv(allStates_updated, "~/GitHub/geoscanning/Data/Retailers/all_Retailers_5_20_21.csv")
+write.csv(allStates_updated, "~/GitHub/geoscanning/Data/Retailers/all_Retailers_DE_8_2023_PA_8_2023_NJ_2023err.csv")
