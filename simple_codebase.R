@@ -1,6 +1,6 @@
 # Abbreviated Code Base For Cleaning Geo-Data
 # Michael Fichman & Brad Mattan / Falk Lab / Geoscanning
-# 3 / 1/ 2021
+# 4 / 18 / 2024
 
 # Load and clean geotracking data
 # Apply space-time functions and NYU stay events
@@ -9,6 +9,7 @@
 
 # Load Libraries
 
+#library(plyr) # Load this if you need to run the nyu functions from our code base instad of from devtools
 library(tidyverse)
 library(sf)
 library(tigris)
@@ -50,10 +51,28 @@ source("R/removeDuplicates.R")
 
 # Output is an sf object
 
-cleanData <- uploadGeodata("/Volumes/cnlab/GeoRemote/Timeline/2_S2/GR019_S2_Takeout/Location\ History") %>%
-  cleanDates(., "2022-07-07 21:30:45", "2022-07-22 15:17:47", addFlags = FALSE, "Records.json")
+# Note that if NYU mobility package is inoperable - use sourced NYU functions
+# This will require loading packages DataCombine, zoo, geosphere and perhaps others
+# DataCombine seems nonfunctional as of 4/18/2024, so the relevant function 'slide'
+# Is replicated below - it requires plyr, which needs to be loaded before tidyverse
 
-cleanData <- uploadGeodata("Data/Geotracking/multi_json_test") %>%
+library(zoo)
+library(geosphere)
+
+source("R/nyu_functions/radiusofgyration.R")
+source("R/nyu_functions/stayevent.R")
+source("R/nyu_functions/groupdist.R")
+source("R/nyu_functions/grouptime.R")
+source("R/nyu_functions/DataCombine/utils.R")
+source("R/nyu_functions/DataCombine/slide.R")
+source("R/nyu_functions/seqgroup.R")
+source("R/nyu_functions/mergewithorder.R")
+source("R/nyu_functions/sdspatialdatapoints.R")
+
+cleanData <- uploadGeodata("~/GitHub/geoscanning/Data/Geotracking/multi_json_test") %>%
+  cleanDates(., "2018-01-01 21:30:45", "2022-07-22 15:17:47", addFlags = FALSE, "Records.json")
+
+cleanData <- uploadGeodata("~/GitHub/geoscanning/Data/Geotracking/multi_json_test") %>%
   cleanDates(., "2019-04-22 21:30:45", "2019-08-05 15:17:47", addFlags = FALSE, "file1.json") %>% # parameter
   cleanDates(., "2019-04-22 21:30:45", "2019-08-05 15:17:47", addFlags = FALSE, "file2.json") %>% # parameter
   stayevent(., 
