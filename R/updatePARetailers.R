@@ -60,7 +60,7 @@ retailers_Socrata_pa <- read.socrata("https://data.pa.gov/resource/ut72-sft8.jso
 ## If you are loading data from file, you can use the following code:
 # Make sure to change the input date to be the date of DL for the data set
 
-retailers_Socrata_pa <- read.csv("~/GitHub/geoscanning/Data/Retailers/PA/2023_08/Tobacco_Products_Tax_Licenses_Current_Monthly_County_Revenue.csv") %>%
+retailers_Socrata_pa <- read.csv("~/GitHub/geoscanning/Data/Retailers/PA/2024_06/Tobacco_Products_Tax_Licenses_Current_Weekly_County_Revenue_20240610.csv") %>%
   rename(county = County,
          legal_name = Legal.Name,
          trade_name = Trade.Name,
@@ -81,7 +81,7 @@ retailers_Socrata_pa <- read.csv("~/GitHub/geoscanning/Data/Retailers/PA/2023_08
   separate(cleaned_text, into = c("address"), sep = "\\s{2,}", extra = "drop") %>%
   dplyr::select(-legal_name, -postal_code, -country,
                 -latitude, -longitude, -location_1.human_address) %>%
-  mutate(publish_date = ymd("2023-08-01"),
+  mutate(publish_date = ymd("2024-06-01"),
          state = "PA",
          expiration_date = mdy(expiration_date)) %>%
   rename(address_full = address) %>%
@@ -91,9 +91,10 @@ retailers_Socrata_pa <- read.csv("~/GitHub/geoscanning/Data/Retailers/PA/2023_08
 
 # Load stored retailer database, filter for only PA observations
 
-stored_pa <- read.csv("~/GitHub/geoscanning/Data/Retailers/all_Retailers_8_30_23_2023_07.csv") %>%
+stored_pa <- read.csv("~/GitHub/geoscanning/Data/Retailers/all_Retailers_DE_8_2023_PA_05_2024_NJ_2022err.csv") %>%
   dplyr::select(canonical_names) %>%
   mutate_if(is.factor, as.character) %>%
+  mutate_if(is.double, as.character) %>%
   mutate(expiration_date = ymd(expiration_date),
          publish_date = ymd(publish_date)) %>%
   filter(state == "PA")
@@ -171,11 +172,22 @@ geocoded_pa_fixed <- geocoded_pa %>%
   filter(account != "46**3444") # %>%
   #mutate(lat = ifelse(account == "65**7908", 40.32395389003288,     lat),
   #       lon = ifelse(account == "65**7908", -79.78319044322932, lon))
+
+# If there are no failures, run the following code
+# geocoded_pa_fixed <- geocoded_pa
+
+# Run a bit of code to strip out any duplicated rows (we have an issue with these propagating in the join)
+
+geocoded_pa_fixed <- geocoded_pa_fixed %>%
+  group_by(trade_name, account, expired_y_n, address_full, 
+           county, expiration_date, publish_date, license_type, lat) %>%
+  slice(1) %>%
+  ungroup
   
 
 # Append to the rest of the retailers and write it out
 
-allStates_updated <- read.csv("~/GitHub/geoscanning/Data/Retailers/all_Retailers_8_30_23_2023_07.csv") %>%
+allStates_updated <- read.csv("~/GitHub/geoscanning/Data/Retailers/all_Retailers_DE_8_2023_PA_05_2024_NJ_2022err.csv") %>%
   dplyr::select(canonical_names) %>%
   mutate_if(is.factor, as.character) %>%
   mutate(account = as.character(account)) %>%
@@ -184,4 +196,12 @@ allStates_updated <- read.csv("~/GitHub/geoscanning/Data/Retailers/all_Retailers
   filter(state != "PA") %>%
   rbind(., geocoded_pa_fixed)
 
-write.csv(allStates_updated, "~/GitHub/geoscanning/Data/Retailers/all_Retailers_8_30_23_2023_08.csv")
+# Run the same duplicate removal routine that we run a few steps ago
+
+allStates_updated <- allStates_updated %>%
+  group_by(trade_name, account, expired_y_n, address_full, 
+           county, expiration_date, publish_date, license_type, lat) %>%
+  slice(1) %>%
+  ungroup
+
+write.csv(allStates_updated, "~/GitHub/geoscanning/Data/Retailers/all_Retailers_DE_8_2023_PA_06_2024_NJ_2022err.csv")

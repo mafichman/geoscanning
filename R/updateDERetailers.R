@@ -76,7 +76,7 @@ retailers_Socrata_de <- read.socrata("https://data.delaware.gov/resource/5zy2-gr
 ## rename the columns and then unnest the lat/lon data
 ## You also will notice that the date parsing is in mdy, not ymd
 
-retailers_Socrata_de <- read.csv("~/GitHub/geoscanning/Data/Retailers/DE/08_17_23_Delaware_Business_Licenses.csv") %>%
+retailers_Socrata_de <- read.csv("~/GitHub/geoscanning/Data/Retailers/DE/06_10_24_Delaware_Business_Licenses_20240610.csv") %>%
   rename(current_license_valid_from = Current.license.valid.from,
          business_name = Business.name,
          trade_name = Trade.name,
@@ -119,9 +119,9 @@ retailers_Socrata_de <- read.csv("~/GitHub/geoscanning/Data/Retailers/DE/08_17_2
 
 
 
-# Load stored data
+# Load stored data - most recent all_Retailers data set - we keep only the delaware observations here
 
-stored_de <- read.csv("~/GitHub/geoscanning/Data/Retailers/all_Retailers_8_30_23_07_10_23.csv") %>%
+stored_de <- read.csv("~/GitHub/geoscanning/Data/Retailers/all_Retailers_DE_05_2024_PA_06_2024_NJ_2022err.csv") %>%
   dplyr::select(canonical_names) %>%
   mutate_if(is.factor, as.character) %>%
   mutate(expiration_date = ymd(expiration_date),
@@ -191,9 +191,17 @@ errors_de <- st_join(geocoded_de %>%
 # If there are no bad geocodes (aka no observations in errors_de), do this:
 geocoded_de_fixed <- geocoded_de
 
+# Run a bit of code to strip out any duplicated rows (we have an issue with these propagating in the join)
+
+geocoded_de_fixed <- geocoded_de_fixed %>%
+  group_by(trade_name, account, expired_y_n, address_full, 
+           expiration_date, publish_date, license_type, lat) %>%
+  slice(1) %>%
+  ungroup
+
 # Put all the data back together
 
-allStates_updated <- read.csv("~/GitHub/geoscanning/Data/Retailers/all_Retailers_8_30_23_07_10_23.csv") %>%
+allStates_updated <- read.csv("~/GitHub/geoscanning/Data/Retailers/all_Retailers_DE_05_2024_PA_06_2024_NJ_2022err.csv") %>%
   dplyr::select(canonical_names) %>%
   mutate_if(is.factor, as.character) %>%
   mutate(account = as.character(account)) %>%
@@ -202,4 +210,12 @@ allStates_updated <- read.csv("~/GitHub/geoscanning/Data/Retailers/all_Retailers
   filter(state != "DE") %>%
   rbind(., geocoded_de_fixed)
 
-write.csv(allStates_updated, "~/GitHub/geoscanning/Data/Retailers/all_Retailers_8_30_23_08_17_23.csv")
+# Remove any duplicates
+
+allStates_updated <- allStates_updated %>%
+  group_by(trade_name, account, expired_y_n, address_full, 
+           expiration_date, publish_date, license_type, lat) %>%
+  slice(1) %>%
+  ungroup
+
+write.csv(allStates_updated, "~/GitHub/geoscanning/Data/Retailers/all_Retailers_DE_06_2024_PA_06_2024_NJ_2022err.csv")
